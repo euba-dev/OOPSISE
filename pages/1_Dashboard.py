@@ -1,3 +1,5 @@
+import os
+
 import plotly.express as px
 import streamlit as st
 
@@ -286,6 +288,82 @@ peut indiquer qu'un certain type de trafic est fréquemment tenté mais interdit
                           plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
                           margin=dict(l=0, r=0, t=10, b=0))
         st.plotly_chart(fig, use_container_width=True)
+
+    # ── Priorités métier ────────────────────────────────────────────────────────
+    st.divider()
+    st.subheader("🧠 Priorités métier")
+
+    _api_key = os.getenv("MISTRAL_API_KEY", "")
+    if not _api_key:
+        st.info(
+            "💡 Configurer `MISTRAL_API_KEY` dans `.env` pour activer l'analyse des priorités.",
+            icon="🔑",
+        )
+    else:
+        col_btn, col_hint = st.columns([1, 4])
+        with col_btn:
+            run_prio = st.button("🧠 Analyser", type="primary", use_container_width=True)
+        with col_hint:
+            st.caption(
+                "Mistral analyse les données **actuellement filtrées** et identifie "
+                "les actions prioritaires pour votre équipe."
+            )
+
+        if run_prio or "priorities_result" in st.session_state:
+            if run_prio:
+                # Calcul des stats sur le df filtré courant
+                _deny_p   = compute_deny_ratio(df)
+                _top3_ips = top_src_ips(df, 3)["src_ip"].tolist()
+                _top3_pts = (
+                    df.groupby("dst_port").size()
+                    .sort_values(ascending=False).head(3).index.tolist()
+                )
+                _n_ext    = len(external_ip_accesses(df))
+                _h_totals = df.groupby(df["timestamp"].dt.hour).size()
+                _peak_h   = int(_h_totals.idxmax()) if not _h_totals.empty else 0
+                _top_rule = (
+                    df.groupby("policy_id").size()
+                    .sort_values(ascending=False).index[0]
+                    if not df.empty else "—"
+                )
+                _d_min = df["timestamp"].min().strftime("%d/%m/%Y")
+                _d_max = df["timestamp"].max().strftime("%d/%m/%Y")
+
+                _prompt = f"""Tu es un analyste SOC expérimenté. Voici les statistiques de logs firewall filtrés.
+
+PÉRIODE : {_d_min} → {_d_max} | {len(df):,} flux analysés
+MÉTRIQUES :
+- Taux de Deny : {_deny_p}%
+- Top 3 IPs sources actives : {_top3_ips}
+- Top 3 ports les plus ciblés : {[port_label(p) for p in _top3_pts]}
+- Flux depuis IPs externes : {_n_ext:,}
+- Heure de pic de trafic : {_peak_h}h
+- Règle firewall la plus sollicitée : {_top_rule}
+
+CONSIGNE STRICTE — réponds UNIQUEMENT avec 3 à 5 lignes au format exact :
+🔴 **[Critique]** action immédiate en 8 mots max — justification en 1 phrase
+🟡 **[Attention]** à surveiller en 8 mots max — justification en 1 phrase
+🟢 **[Info]** contexte utile en 8 mots max — justification en 1 phrase
+
+Aucune introduction. Aucune conclusion. Seulement les priorités numérotées."""
+
+                try:
+                    from mistralai.client import MistralClient
+                    from mistralai.models.chat_completion import ChatMessage
+
+                    with st.spinner("Mistral analyse les priorités…"):
+                        client = MistralClient(api_key=_api_key)
+                        resp = client.chat(
+                            model="mistral-small-latest",
+                            messages=[ChatMessage(role="user", content=_prompt)],
+                        )
+                        st.session_state["priorities_result"] = resp.choices[0].message.content
+                except Exception as e:
+                    st.error(f"Erreur Mistral : {e}")
+
+            if "priorities_result" in st.session_state:
+                st.markdown(st.session_state["priorities_result"])
+                st.caption("_Généré par Mistral AI · mistral-small-latest · données filtrées_")
 
 
 # =============================================================================
