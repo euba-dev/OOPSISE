@@ -1,4 +1,3 @@
-import pandas as pd
 import plotly.express as px
 import streamlit as st
 
@@ -6,7 +5,6 @@ from utils.data_loader import get_data
 from utils.helpers import (
     add_port_category,
     compute_deny_ratio,
-    compute_hourly_traffic,
     external_ip_accesses,
     ip_traffic_summary,
     port_category_distribution,
@@ -62,17 +60,35 @@ with t1:
 
     with col_l:
         st.subheader("Trafic par heure")
-        hourly  = compute_hourly_traffic(df)
-        peak_h  = int(hourly.loc[hourly["count"].idxmax(), "hour"])
-        fig = px.bar(hourly, x="hour", y="count",
-                     labels={"hour": "Heure (UTC)", "count": "Flux"},
-                     color_discrete_sequence=["#3B82F6"])
+        df_h = df.copy()
+        df_h["hour"] = df_h["timestamp"].dt.hour
+        hourly_action = df_h.groupby(["hour", "action"]).size().reset_index(name="count")
+        hourly_total  = df_h.groupby("hour").size()
+        avg_vol        = hourly_total.mean()
+        threshold_line = avg_vol * 1.5
+        peak_h         = int(hourly_total.idxmax())
+        peak_cnt       = int(hourly_total.max())
+
+        fig = px.bar(hourly_action, x="hour", y="count", color="action", barmode="stack",
+                     color_discrete_map={"Permit": "#22C55E", "Deny": "#EF4444"},
+                     labels={"hour": "Heure (UTC)", "count": "Flux"})
+        fig.add_hline(y=threshold_line, line_dash="dash", line_color="orange",
+                      annotation_text="Seuil alerte (+50% moy.)",
+                      annotation_position="top right")
         fig.update_layout(xaxis=dict(dtick=1, tickvals=list(range(24))),
                           plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
                           margin=dict(l=0, r=0, t=10, b=0))
         st.plotly_chart(fig, use_container_width=True)
-        peak_cnt = int(hourly.loc[hourly["hour"] == peak_h, "count"].values[0])
-        st.caption(f"📌 Pic de trafic à **{peak_h}h** avec {peak_cnt:,} flux.")
+
+        hot_hours = hourly_total[hourly_total > threshold_line].index.tolist()
+        if hot_hours:
+            st.warning(
+                f"⚠️ Trafic anormalement élevé à : **{', '.join(f'{h}h' for h in hot_hours)}** "
+                f"(>{threshold_line:.0f} flux/h). Possible attaque ou pic de scan."
+            )
+        else:
+            st.caption(f"📌 Pic de trafic à **{peak_h}h** avec {peak_cnt:,} flux — "
+                       "distribution homogène.")
 
     with col_r:
         st.subheader("Permit / Deny")
@@ -135,6 +151,40 @@ with t1:
         if n_permit_ext > 0:
             st.warning(f"⚠️ {n_permit_ext:,} flux **Permit** depuis des IPs hors plan interne — "
                        "À vérifier avec les règles de filtrage.")
+
+    st.divider()
+
+    # ── Classement des règles firewall ────────────────────────────────────────
+    col_r1, col_r2 = st.columns(2)
+
+    with col_r1:
+        st.subheader("Règles firewall les plus sollicitées")
+        rule_total = (df.groupby("policy_id").size()
+                      .reset_index(name="total").sort_values("total", ascending=False))
+        fig = px.bar(rule_total.head(15), x="policy_id", y="total",
+                     labels={"policy_id": "Règle (policy_id)", "total": "Flux"},
+                     color="total", color_continuous_scale="Purples")
+        fig.update_layout(xaxis_type="category",
+                          plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                          coloraxis_showscale=False, margin=dict(l=0, r=0, t=10, b=0))
+        st.plotly_chart(fig, use_container_width=True)
+        top_rule = rule_total.iloc[0]
+        st.caption(f"📌 Règle **{top_rule['policy_id']}** : {int(top_rule['total']):,} flux. "
+                   "Règle 999 = cleanup (catch-all).")
+
+    with col_r2:
+        st.subheader("Règles avec le plus de Deny")
+        deny_per_rule = (df[df["action"] == "Deny"]
+                         .groupby("policy_id").size()
+                         .reset_index(name="n_deny")
+                         .sort_values("n_deny", ascending=False).head(10))
+        fig = px.bar(deny_per_rule, x="policy_id", y="n_deny",
+                     labels={"policy_id": "Règle", "n_deny": "Flux Deny"},
+                     color_discrete_sequence=["#EF4444"])
+        fig.update_layout(xaxis_type="category",
+                          plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                          margin=dict(l=0, r=0, t=10, b=0))
+        st.plotly_chart(fig, use_container_width=True)
 
 
 # =============================================================================

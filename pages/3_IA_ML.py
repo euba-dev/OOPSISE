@@ -22,144 +22,14 @@ df = render_sidebar(get_data())
 
 st.header("🤖 IA & ML — Analyse avancée")
 
-tab_insights, tab_if, tab_mistral = st.tabs([
-    "⚡ Insights automatiques",
+tab_if, tab_mistral = st.tabs([
     "🔍 Isolation Forest",
     "💬 Mistral AI",
 ])
 
 
 # =============================================================================
-# TAB 1 — INSIGHTS AUTOMATIQUES (aucune API, résultats immédiats)
-# =============================================================================
-
-with tab_insights:
-    st.markdown("Détection de patterns suspects calculée directement sur les données — sans API externe.")
-
-    if df.empty:
-        st.warning("Aucune donnée avec les filtres actuels.")
-    else:
-        deny_pct = compute_deny_ratio(df)
-        df_h = df.copy()
-        df_h["hour"] = df_h["timestamp"].dt.hour
-
-        # ── KPIs ──────────────────────────────────────────────────────────────
-        c1, c2, c3, c4 = st.columns(4)
-
-        # IP la plus suspecte : deny_ratio le plus élevé avec >20 flux
-        ip_stats = (df.groupby("src_ip")
-                    .agg(n_flows=("dst_ip", "count"),
-                         n_deny=("action", lambda x: (x == "Deny").sum()))
-                    .query("n_flows >= 20"))
-        ip_stats["deny_ratio"] = ip_stats["n_deny"] / ip_stats["n_flows"] * 100
-
-        most_suspicious_ip  = ip_stats["deny_ratio"].idxmax() if not ip_stats.empty else "N/A"
-        sus_ratio           = ip_stats.loc[most_suspicious_ip, "deny_ratio"] if not ip_stats.empty else 0
-
-        # Heure la plus chargée
-        peak_hour = int(df_h.groupby("hour").size().idxmax())
-        peak_vol  = int(df_h.groupby("hour").size().max())
-
-        # Port le plus ciblé avec Deny
-        top_deny_port = (df[df["action"] == "Deny"]
-                         .groupby("dst_port").size()
-                         .idxmax() if not df[df["action"] == "Deny"].empty else "N/A")
-
-        # IPs externes
-        n_ext = len(external_ip_accesses(df))
-
-        c1.metric("IP la + suspecte",   most_suspicious_ip,
-                  help="IP avec le plus fort taux Deny (min. 20 flux)")
-        c2.metric("Taux Deny de l'IP",  f"{sus_ratio:.0f} %")
-        c3.metric("Port le + bloqué",   str(top_deny_port))
-        c4.metric("IPs hors réseau",    f"{n_ext:,}")
-
-        st.divider()
-
-        # ── Analyse par heure : pic suspect ? ─────────────────────────────────
-        st.subheader("Détection de pic horaire anormal")
-        hourly = df_h.groupby(["hour", "action"]).size().reset_index(name="count")
-        avg_vol = df_h.groupby("hour").size().mean()
-        threshold_line = avg_vol * 1.5
-
-        fig = px.bar(hourly, x="hour", y="count", color="action", barmode="stack",
-                     color_discrete_map={"Permit": "#22C55E", "Deny": "#EF4444"},
-                     labels={"hour": "Heure", "count": "Flux"})
-        fig.add_hline(y=threshold_line, line_dash="dash", line_color="orange",
-                      annotation_text=f"Seuil alerte (+50% moy.)", annotation_position="top right")
-        fig.update_layout(plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
-                          margin=dict(l=0, r=0, t=10, b=0),
-                          xaxis=dict(dtick=1, tickvals=list(range(24))))
-        st.plotly_chart(fig, use_container_width=True)
-
-        # Heures au-dessus du seuil
-        hours_above = df_h.groupby("hour").size()
-        hot_hours = hours_above[hours_above > threshold_line].index.tolist()
-        if hot_hours:
-            st.warning(f"⚠️ Trafic anormalement élevé à : **{', '.join(f'{h}h' for h in hot_hours)}** "
-                       f"(>{threshold_line:.0f} flux/h). Possible attaque ou pic de scan.")
-        else:
-            st.success("✅ Aucun pic horaire anormal détecté — distribution du trafic homogène.")
-
-        st.divider()
-
-        # ── Classement des règles firewall (§1.1) ─────────────────────────────
-        col_a, col_b = st.columns(2)
-
-        with col_a:
-            st.subheader("Classement des règles firewall")
-            rule_usage = (df.groupby(["policy_id", "action"])
-                          .size().reset_index(name="count")
-                          .sort_values("count", ascending=False))
-            rule_total = (df.groupby("policy_id").size()
-                          .reset_index(name="total").sort_values("total", ascending=False))
-            fig = px.bar(rule_total.head(15), x="policy_id", y="total",
-                         labels={"policy_id": "Règle (policy_id)", "total": "Flux"},
-                         color="total", color_continuous_scale="Purples")
-            fig.update_layout(xaxis_type="category",
-                              plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
-                              coloraxis_showscale=False, margin=dict(l=0, r=0, t=10, b=0))
-            st.plotly_chart(fig, use_container_width=True)
-            top_rule = rule_total.iloc[0]
-            st.caption(f"📌 Règle **{top_rule['policy_id']}** est la plus sollicitée "
-                       f"({int(top_rule['total']):,} flux). "
-                       f"Règle 999 = cleanup (catch-all).")
-
-        with col_b:
-            st.subheader("Deny par règle")
-            deny_per_rule = (df[df["action"] == "Deny"]
-                             .groupby("policy_id").size()
-                             .reset_index(name="n_deny")
-                             .sort_values("n_deny", ascending=False).head(10))
-            fig = px.bar(deny_per_rule, x="policy_id", y="n_deny",
-                         labels={"policy_id": "Règle", "n_deny": "Flux Deny"},
-                         color_discrete_sequence=["#EF4444"])
-            fig.update_layout(xaxis_type="category",
-                              plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
-                              margin=dict(l=0, r=0, t=10, b=0))
-            st.plotly_chart(fig, use_container_width=True)
-
-        st.divider()
-
-        # ── IPs suspectes : Deny ratio élevé ──────────────────────────────────
-        st.subheader("IPs suspectes — taux Deny > 30 %")
-        suspicious = ip_stats[ip_stats["deny_ratio"] > 30].sort_values("deny_ratio", ascending=False)
-        if suspicious.empty:
-            st.success("✅ Aucune IP avec un taux Deny > 30%.")
-        else:
-            fig = px.scatter(suspicious.reset_index(), x="n_flows", y="deny_ratio",
-                             size="n_flows", hover_name="src_ip",
-                             color="deny_ratio", color_continuous_scale="Reds",
-                             labels={"n_flows": "Volume de flux",
-                                     "deny_ratio": "% Deny", "src_ip": "IP"},
-                             title=f"{len(suspicious)} IP(s) suspectes")
-            fig.update_layout(plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
-                              margin=dict(l=0, r=0, t=30, b=0))
-            st.plotly_chart(fig, use_container_width=True)
-
-
-# =============================================================================
-# TAB 2 — ISOLATION FOREST
+# TAB 1 — ISOLATION FOREST
 # =============================================================================
 
 with tab_if:
@@ -239,7 +109,7 @@ with tab_if:
 
 
 # =============================================================================
-# TAB 3 — MISTRAL AI
+# TAB 2 — MISTRAL AI
 # =============================================================================
 
 with tab_mistral:
