@@ -7,6 +7,8 @@ Format des données (§1.2 énoncé OPSIE) :
     policy_id (999 = cleanup), interface_in, interface_out
 """
 
+from __future__ import annotations
+
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
