@@ -21,26 +21,23 @@ def page_accueil():
     st.markdown("""
 ### À quoi sert cette application ?
 
-Dans le cadre du **Challenge OPSIE x SISE 2026**, cette application permet d'explorer et d'analyser
-des **journaux de connexion réseau** (appelés *logs*) produits par un **pare-feu iptables**.
+Dans le cadre du **Challenge OPSIE x SISE **, cette application permet d'explorer et d'analyser
+des **logs** produits par un **pare-feu iptables**.
 
 ---
 
-#### 🔥 Qu'est-ce qu'un pare-feu et des logs ?
 
-Un **pare-feu** (*firewall*) est un système de sécurité qui surveille tout le trafic réseau
-entrant et sortant d'une organisation. Pour chaque connexion qui tente de passer, il applique
+Pour chaque connexion qui tente de passer, le pare-feu applique
 des **règles** et prend une décision :
 
 - ✅ **Permit** — la connexion est **autorisée** à passer
 - 🚫 **Deny** — la connexion est **bloquée**
 
-Chaque décision est enregistrée dans un **log** : une ligne horodatée qui documente qui a voulu
-se connecter, vers où, sur quel port, avec quel protocole, et ce que le pare-feu a décidé.
+Nous disposons donc des logs qui documentent qui a voulu se connecter, à quoi, sur quel port, avec quel protocole, et la décision prise par le pare-feu.
 
 ---
 
-#### 📖 Glossaire rapide
+#### 📖 Mini-Glossaire 
 
 | Terme | Définition |
 |---|---|

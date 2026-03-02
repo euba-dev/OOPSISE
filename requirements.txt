@@ -7,3 +7,5 @@ elasticsearch==8.12.1
 sqlalchemy==2.0.28
 numpy==1.26.4
 python-dotenv==1.0.1
+prince>=0.7.1
+openTSNE>=1.0.0

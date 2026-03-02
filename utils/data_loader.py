@@ -88,11 +88,20 @@ def _load_csv() -> pd.DataFrame:
 
 
 def _load_sql() -> pd.DataFrame:
+    from pathlib import Path
+
     from sqlalchemy import create_engine, text
 
     url = os.getenv("SQL_URL")
     if not url:
         raise EnvironmentError("SQL_URL non défini dans les variables d'environnement.")
+
+    # Pour SQLite avec chemin relatif : résoudre depuis la racine du projet (parent de utils/)
+    if url.startswith("sqlite:///"):
+        db_rel = url[len("sqlite:///"):]
+        if not Path(db_rel).is_absolute():
+            db_abs = Path(__file__).parent.parent / db_rel
+            url = f"sqlite:///{db_abs}"
 
     query = os.getenv("SQL_QUERY", "SELECT * FROM iptables_logs")
     engine = create_engine(url)
