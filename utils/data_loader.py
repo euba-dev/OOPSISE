@@ -3,7 +3,12 @@ Backend data loader — aucun code Streamlit ici.
 
 Configuration via variables d'environnement (fichier .env) :
 
-    DATA_SOURCE   : mock | csv | sql | elasticsearch  (défaut : mock)
+    DATA_SOURCE   : mock | parquet | csv | sql | elasticsearch  (défaut : mock)
+
+    # Si DATA_SOURCE=parquet
+    PARQUET_PATH  : chemin vers le fichier .parquet (relatif ou absolu)
+                    Format attendu : colonne unique 'raw_log' séparée par ';'
+                    timestamp;src_ip;dst_ip;proto;src_port;dst_port;policy_id;action;iface_in;iface_out;ttl
 
     # Si DATA_SOURCE=csv
     CSV_PATH      : chemin absolu vers le fichier CSV iptables
@@ -57,6 +62,24 @@ def _load_mock() -> pd.DataFrame:
     return generate_iptables_logs()
 
 
+def _load_parquet() -> pd.DataFrame:
+    path = os.getenv("PARQUET_PATH")
+    if not path:
+        raise EnvironmentError("PARQUET_PATH non défini dans les variables d'environnement.")
+    raw = pd.read_parquet(path)
+    # Colonne unique 'raw_log' : timestamp;src_ip;dst_ip;proto;src_port;dst_port;policy_id;action;iface_in;iface_out;ttl
+    parsed = raw["raw_log"].str.strip().str.split(";", expand=True)
+    parsed.columns = [
+        "timestamp", "src_ip", "dst_ip", "proto",
+        "src_port", "dst_port", "policy_id", "action",
+        "interface_in", "interface_out", "ttl",
+    ]
+    # Normaliser l'action : DENY → Deny, PERMIT → Permit, supprimer lignes malformées
+    parsed["action"] = parsed["action"].str.capitalize()
+    parsed = parsed[parsed["action"].isin(["Deny", "Permit"])]
+    return _validate(parsed.drop(columns=["src_port", "ttl"]))
+
+
 def _load_csv() -> pd.DataFrame:
     path = os.getenv("CSV_PATH")
     if not path:
@@ -93,6 +116,7 @@ def _load_elasticsearch() -> pd.DataFrame:
 
 _LOADERS = {
     "mock":          _load_mock,
+    "parquet":       _load_parquet,
     "csv":           _load_csv,
     "sql":           _load_sql,
     "elasticsearch": _load_elasticsearch,

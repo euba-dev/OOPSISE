@@ -19,6 +19,7 @@ st.divider()
 # ── Source active ─────────────────────────────────────────────────────────────
 source_info = {
     "mock":          ("🟡", "Données fictives",  "Générées localement pour le développement."),
+    "parquet":       ("🟢", "Fichier Parquet",   "Lecture depuis `PARQUET_PATH`."),
     "csv":           ("🟢", "Fichier CSV",       "Lecture depuis `CSV_PATH`."),
     "sql":           ("🟢", "Base SQL",          "Connexion via `SQL_URL`."),
     "elasticsearch": ("🟢", "Elasticsearch",     "Index `ES_INDEX` sur `ES_URL`."),
@@ -41,7 +42,7 @@ with col1:
     st.code("streamlit run main.py", language="bash")
     st.markdown("##### Changer de source de données")
     st.code(
-        "# .env\nDATA_SOURCE=csv\nCSV_PATH=/chemin/vers/logs_iptables.csv",
+        "# .env\nDATA_SOURCE=parquet\nPARQUET_PATH=logs_export.parquet",
         language="bash",
     )
 
