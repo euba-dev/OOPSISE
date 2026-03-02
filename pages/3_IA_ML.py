@@ -418,9 +418,21 @@ with tab_mistral:
         api_key = st.text_input("Clé API Mistral", type="password",
                                 placeholder="sk-...", key="mistral_key")
 
-    model_choice = st.selectbox("Modèle",
-                                ["mistral-small-latest", "mistral-medium-latest",
-                                 "mistral-large-latest"])
+    model_choice = st.selectbox(
+        "Modèle",
+        ["mistral-small-latest", "mistral-medium-latest", "mistral-large-latest"],
+        help=(
+            "**mistral-small-latest** — Rapide et économique. "
+            "Idéal pour des rapports courts et des analyses répétées. "
+            "Consommation faible (~0,1 $/M tokens).\n\n"
+            "**mistral-medium-latest** — Bon équilibre qualité/coût. "
+            "Recommandé pour des rapports détaillés avec nuances. "
+            "Consommation modérée (~0,4 $/M tokens).\n\n"
+            "**mistral-large-latest** — Le plus puissant. "
+            "Meilleure analyse contextuelle et recommandations précises. "
+            "Consommation élevée (~2 $/M tokens)."
+        ),
+    )
 
     if st.button("🧠 Générer le rapport", type="primary",
                  disabled=not api_key, use_container_width=True):
