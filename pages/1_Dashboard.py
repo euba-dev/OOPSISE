@@ -92,12 +92,10 @@ MÉTRIQUES :
 - Règle firewall la plus sollicitée : {_top_rule}
 
 CONSIGNE STRICTE — réponds UNIQUEMENT avec 3 à 5 lignes. Chaque ligne DOIT se terminer par la référence entre parenthèses.
-Format OBLIGATOIRE (respecte-le à la lettre) :
-🔴 **[Critique]** action immédiate en 8 mots max — justification (voir onglet Vue générale > Taux de blocage)
-🟡 **[Attention]** à surveiller en 8 mots max — justification (voir onglet Ports & Protocoles > TOP 15 ports)
-🟢 **[Info]** contexte utile en 8 mots max — justification (voir onglet IP Explorer > Scatter interactif)
-
-Les lignes ci-dessus sont des EXEMPLES de format. Adapte le contenu aux données réelles.
+Voici des exemples de vrai output attendu — remplace le contenu par les données réelles ci-dessus :
+🔴 **[Critique]** Taux de Deny critique — plus d'un quart des connexions sont bloquées (voir onglet Vue générale > Taux de blocage)
+🟡 **[Attention]** Port 22 très sollicité — possible brute force SSH en cours (voir onglet Ports & Protocoles > TOP 15 ports)
+🟢 **[Info]** Pic de trafic à 6h — vérifier les tâches automatisées nocturnes (voir onglet Vue générale > Trafic horaire)
 Onglets et graphiques disponibles :
 - Vue générale : Trafic horaire, Carte thermique, Taux de blocage, TOP 5 IPs, TOP 10 ports Permit, IPs externes, Règles firewall
 - Ports & Protocoles : Flux par protocole, Catégories RFC 6056, TOP 15 ports, Catégorie × Décision
