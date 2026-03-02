@@ -87,7 +87,7 @@ with t1:
         peak_cnt       = int(hourly_total.max())
 
         fig = px.bar(hourly_action, x="hour", y="count", color="action", barmode="stack",
-                     color_discrete_map={"Permit": "#22C55E", "Deny": "#EF4444"},
+                     color_discrete_map={"Permit": "#4ADE80", "Deny": "#F87171"},
                      labels={"hour": "Heure (UTC)", "count": "Nombre de connexions", "action": "Décision"})
         fig.add_hline(y=threshold_line, line_dash="dash", line_color="orange",
                       annotation_text="Seuil alerte (+50% moy.)",
@@ -121,7 +121,7 @@ les *Deny* correspondant aux tentatives bloquées.
         counts = df["action"].value_counts().reset_index()
         counts.columns = ["action", "count"]
         fig = px.pie(counts, names="action", values="count", color="action",
-                     color_discrete_map={"Permit": "#22C55E", "Deny": "#EF4444"}, hole=0.45)
+                     color_discrete_map={"Permit": "#4ADE80", "Deny": "#F87171"}, hole=0.45)
         fig.update_layout(margin=dict(l=0, r=0, t=10, b=0),
                           legend=dict(orientation="h", yanchor="bottom", y=-0.2))
         st.plotly_chart(fig, use_container_width=True)
@@ -142,7 +142,7 @@ les *Deny* correspondant aux tentatives bloquées.
         daily = compute_daily_traffic(df)
         fig_day = px.line(
             daily, x="date", y="count", color="action", markers=True,
-            color_discrete_map={"Permit": "#22C55E", "Deny": "#EF4444"},
+            color_discrete_map={"Permit": "#4ADE80", "Deny": "#F87171"},
             labels={"date": "Date", "count": "Connexions", "action": "Décision"},
         )
         fig_day.update_layout(
@@ -173,7 +173,7 @@ ou suspecte (scanner de réseau, machine compromise).
         top5 = top_src_ips(df, n=5)
         fig = px.bar(top5, x="count", y="src_ip", orientation="h",
                      labels={"src_ip": "IP source", "count": "Nombre de connexions"},
-                     color_discrete_sequence=["#3B82F6"])
+                     color_discrete_sequence=["#60A5FA"])
         fig.update_layout(yaxis=dict(autorange="reversed"),
                           plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
                           margin=dict(l=0, r=0, t=10, b=0))
@@ -197,7 +197,7 @@ services sont réellement utilisés sur le réseau.
             tp["port_lbl"] = tp["dst_port"].apply(port_label)
             fig = px.bar(tp, x="port_lbl", y="count",
                          labels={"port_lbl": "Port", "count": "Connexions autorisées"},
-                         color_discrete_sequence=["#22C55E"])
+                         color_discrete_sequence=["#4ADE80"])
             fig.update_layout(xaxis_type="category",
                               plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
                               margin=dict(l=0, r=0, t=10, b=0))
@@ -223,7 +223,7 @@ qu'elles correspondent à des services intentionnellement ouverts vers internet.
                    .size().rename(columns={"size": "count"})
                    .sort_values("count", ascending=False).head(20))
         fig = px.bar(ext_agg, x="src_ip", y="count", color="action",
-                     color_discrete_map={"Permit": "#22C55E", "Deny": "#EF4444"},
+                     color_discrete_map={"Permit": "#4ADE80", "Deny": "#F87171"},
                      labels={"src_ip": "IP source (externe)", "count": "Connexions", "action": "Décision"})
         fig.update_layout(plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
                           margin=dict(l=0, r=0, t=10, b=0))
@@ -256,7 +256,7 @@ sollicitée, cela signifie qu'il y a beaucoup de trafic non prévu dans la confi
                       .reset_index(name="total").sort_values("total", ascending=False))
         fig = px.bar(rule_total.head(15), x="policy_id", y="total",
                      labels={"policy_id": "Numéro de règle", "total": "Nombre de déclenchements"},
-                     color_discrete_sequence=["#8B5CF6"])
+                     color_discrete_sequence=["#A78BFA"])
         fig.update_layout(xaxis_type="category",
                           plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
                           margin=dict(l=0, r=0, t=10, b=0))
@@ -283,7 +283,7 @@ peut indiquer qu'un certain type de trafic est fréquemment tenté mais interdit
                          .sort_values("n_deny", ascending=False).head(10))
         fig = px.bar(deny_per_rule, x="policy_id", y="n_deny",
                      labels={"policy_id": "Numéro de règle", "n_deny": "Connexions bloquées"},
-                     color_discrete_sequence=["#EF4444"])
+                     color_discrete_sequence=["#F87171"])
         fig.update_layout(xaxis_type="category",
                           plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
                           margin=dict(l=0, r=0, t=10, b=0))
@@ -348,14 +348,13 @@ CONSIGNE STRICTE — réponds UNIQUEMENT avec 3 à 5 lignes au format exact :
 Aucune introduction. Aucune conclusion. Seulement les priorités numérotées."""
 
                 try:
-                    from mistralai.client import MistralClient
-                    from mistralai.models.chat_completion import ChatMessage
+                    from mistralai import Mistral
 
                     with st.spinner("Mistral analyse les priorités…"):
-                        client = MistralClient(api_key=_api_key)
-                        resp = client.chat(
+                        client = Mistral(api_key=_api_key)
+                        resp = client.chat.complete(
                             model="mistral-small-latest",
-                            messages=[ChatMessage(role="user", content=_prompt)],
+                            messages=[{"role": "user", "content": _prompt}],
                         )
                         st.session_state["priorities_result"] = resp.choices[0].message.content
                 except Exception as e:
@@ -372,7 +371,7 @@ Aucune introduction. Aucune conclusion. Seulement les priorités numérotées.""
 
 with t2:
     df_p   = add_port_category(df)
-    _COLORS = {"Well-known": "#6366F1", "Registered": "#F59E0B", "Dynamic/Private": "#10B981"}
+    _COLORS = {"Well-known": "#818CF8", "Registered": "#FBBF24", "Dynamic/Private": "#34D399"}
 
     st.subheader("Flux par protocole et décision du pare-feu")
     with st.expander("💡 Comment lire ce graphique ?"):
@@ -388,7 +387,7 @@ Un taux de Deny élevé sur UDP peut indiquer des scans réseau ou du trafic DNS
     proto_cross = (df.groupby(["proto", "action"], as_index=False)
                    .size().rename(columns={"size": "count"}))
     fig = px.bar(proto_cross, x="proto", y="count", color="action", barmode="group",
-                 color_discrete_map={"Permit": "#22C55E", "Deny": "#EF4444"},
+                 color_discrete_map={"Permit": "#4ADE80", "Deny": "#F87171"},
                  labels={"proto": "Protocole", "count": "Nombre de connexions", "action": "Décision"})
     fig.update_layout(plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
                       margin=dict(l=0, r=0, t=10, b=0))
@@ -469,7 +468,7 @@ autorisées (trafic légitime vers des services web) ou bloquées (tentatives d'
     cross = (df_p.groupby(["port_category", "action"], as_index=False)
              .size().rename(columns={"size": "count"}))
     fig = px.bar(cross, x="port_category", y="count", color="action", barmode="group",
-                 color_discrete_map={"Permit": "#22C55E", "Deny": "#EF4444"},
+                 color_discrete_map={"Permit": "#4ADE80", "Deny": "#F87171"},
                  labels={"port_category": "Catégorie de port", "count": "Connexions", "action": "Décision"})
     fig.update_layout(plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
                       margin=dict(l=0, r=0, t=10, b=0))
@@ -544,10 +543,10 @@ Chaque **point** représente une IP source différente. Sa position et son appar
             color_continuous_scale="RdYlGn_r", range_color=[0, 100],
         )
         fig.add_vline(
-            x=dst_threshold, line_dash="solid", line_color="#22C55E", line_width=2,
+            x=dst_threshold, line_dash="solid", line_color="#4ADE80", line_width=2,
             annotation_text="Seuil scanning",
             annotation_position="top left",
-            annotation_font_color="#22C55E",
+            annotation_font_color="#4ADE80",
         )
         fig.update_layout(plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
                           margin=dict(l=0, r=0, t=10, b=0))
@@ -593,7 +592,7 @@ Chaque **point** représente une IP source différente. Sa position et son appar
                          .size().rename(columns={"size": "count"})
                          .sort_values("count", ascending=False).head(10))
                 fig2 = px.bar(dst_c, x="dst_ip", y="count", color="action",
-                              color_discrete_map={"Permit": "#22C55E", "Deny": "#EF4444"},
+                              color_discrete_map={"Permit": "#4ADE80", "Deny": "#F87171"},
                               labels={"dst_ip": "IP destination", "count": "Connexions", "action": "Décision"},
                               title=f"Top 10 destinations contactées par {selected}")
                 fig2.update_layout(plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
@@ -605,7 +604,7 @@ Chaque **point** représente une IP source différente. Sa position et son appar
                           .size().rename(columns={"size": "count"})
                           .sort_values("count", ascending=False).head(10))
                 fig3 = px.bar(port_c, x="dst_port", y="count", color="action",
-                              color_discrete_map={"Permit": "#22C55E", "Deny": "#EF4444"},
+                              color_discrete_map={"Permit": "#4ADE80", "Deny": "#F87171"},
                               labels={"dst_port": "Port ciblé", "count": "Connexions", "action": "Décision"},
                               title=f"Top 10 ports ciblés par {selected}")
                 fig3.update_layout(xaxis_type="category",
