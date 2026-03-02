@@ -4,6 +4,7 @@ import pandas as pd
 import streamlit as st
 
 from utils.data_loader import current_source
+from utils.helpers import classify_port
 
 _SOURCE_LABELS = {
     "mock":          ("🟡", "Données fictives"),
@@ -72,6 +73,24 @@ def render_sidebar(df: pd.DataFrame) -> pd.DataFrame:
         proto_sel  = st.multiselect("Protocole", proto_opts,  default=proto_opts)
         action_sel = st.multiselect("Action",    action_opts, default=action_opts)
 
+        # ── Filtre RFC 6056 (catégorie de port) ────────────────────────────────
+        _PORT_CATS = {
+            "Well-known":      "🟣 Well-known (0–1023)",
+            "Registered":      "🟡 Registered (1024–49151)",
+            "Dynamic/Private": "🟢 Dynamic/Private (49152–65535)",
+        }
+        port_cat_sel = st.multiselect(
+            "Catégorie de port (RFC 6056)",
+            options=list(_PORT_CATS.values()),
+            default=list(_PORT_CATS.values()),
+            help=(
+                "Filtrer selon les plages de ports définies par la RFC 6056 : "
+                "Well-known (0–1023), Registered (1024–49151), Dynamic/Private (49152–65535)."
+            ),
+        )
+        selected_cat_keys = [k for k, v in _PORT_CATS.items() if v in port_cat_sel]
+        mask_port = df["dst_port"].apply(classify_port).isin(selected_cat_keys)
+
         # ── Résumé volume ──────────────────────────────────────────────────────
         st.divider()
         mask_all = (
@@ -79,6 +98,7 @@ def render_sidebar(df: pd.DataFrame) -> pd.DataFrame:
             & mask_hour
             & df["proto"].isin(proto_sel)
             & df["action"].isin(action_sel)
+            & mask_port
         )
         n_filtered = int(mask_all.sum())
         n_total    = len(df)

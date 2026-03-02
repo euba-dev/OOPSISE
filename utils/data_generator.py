@@ -38,9 +38,9 @@ def _random_ip(prefix_list, rng):
 
 
 def generate_iptables_logs(
-    n_rows: int = 5000,
+    n_rows: int = 10000,
     start: datetime | None = None,
-    hours_span: int = 24,
+    hours_span: int = 168,
     deny_ratio: float = 0.18,
     seed: int = 42,
 ) -> pd.DataFrame:
@@ -49,13 +49,21 @@ def generate_iptables_logs(
     if start is None:
         start = datetime.now() - timedelta(hours=hours_span)
 
+    n_business = n_rows - n_rows // 2
+    rng1 = np.random.default_rng(seed + 1)
+    rng2 = np.random.default_rng(seed + 2)
+
+    # 50% trafic uniforme sur toute la période
+    uniform_offsets = rng1.integers(0, hours_span * 3600, n_rows // 2)
+
+    # 50% heures ouvrées (8h–20h) réparties sur tous les jours de la période
+    n_days = max(1, hours_span // 24)
+    days        = rng2.integers(0, n_days, n_business)
+    hour_secs   = rng2.integers(8 * 3600, 20 * 3600, n_business)
+    business_offsets = (days * 24 * 3600 + hour_secs).clip(0, hours_span * 3600 - 1)
+
     offsets = rng.choice(
-        np.concatenate([
-            np.random.default_rng(seed + 1).integers(0, hours_span * 3600, n_rows // 2),
-            np.random.default_rng(seed + 2).integers(
-                8 * 3600, 20 * 3600, n_rows - n_rows // 2
-            ).clip(0, hours_span * 3600),
-        ]),
+        np.concatenate([uniform_offsets, business_offsets]),
         size=n_rows,
         replace=False,
     )

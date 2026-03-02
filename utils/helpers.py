@@ -101,6 +101,40 @@ def external_ip_accesses(df: pd.DataFrame) -> pd.DataFrame:
     return df[mask].copy()
 
 
+# ---------------------------------------------------------------------------
+# Noms de services pour les ports courants (IANA)
+# ---------------------------------------------------------------------------
+
+PORT_SERVICES: dict[int, str] = {
+    20: "FTP-data", 21: "FTP", 22: "SSH", 23: "Telnet", 25: "SMTP",
+    53: "DNS", 80: "HTTP", 110: "POP3", 143: "IMAP", 443: "HTTPS",
+    445: "SMB", 3306: "MySQL", 3389: "RDP", 5432: "PostgreSQL",
+    6379: "Redis", 8080: "HTTP-alt", 8443: "HTTPS-alt",
+}
+
+
+def port_label(port: int) -> str:
+    """Retourne '80 (HTTP)' si connu, sinon '1234'."""
+    name = PORT_SERVICES.get(int(port))
+    return f"{port} ({name})" if name else str(port)
+
+
+# ---------------------------------------------------------------------------
+# Tendance journalière
+# ---------------------------------------------------------------------------
+
+def compute_daily_traffic(df: pd.DataFrame) -> pd.DataFrame:
+    """Retourne le nombre de connexions par jour et par action."""
+    df = df.copy()
+    df["date"] = df["timestamp"].dt.date
+    return (
+        df.groupby(["date", "action"], as_index=False)
+        .size()
+        .rename(columns={"size": "count"})
+        .sort_values("date")
+    )
+
+
 def ip_traffic_summary(df: pd.DataFrame) -> pd.DataFrame:
     """
     Par IP source : nb destinations uniques, nb flux, nb Deny, nb Permit.

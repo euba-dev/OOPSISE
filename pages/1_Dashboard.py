@@ -4,14 +4,16 @@ import streamlit as st
 from utils.data_loader import get_data
 from utils.helpers import (
     add_port_category,
+    compute_daily_traffic,
     compute_deny_ratio,
     external_ip_accesses,
     ip_traffic_summary,
     port_category_distribution,
+    port_label,
     top_permitted_ports_under_1024,
     top_src_ips,
 )
-from utils.ui import PAGE_CONFIG, render_sidebar
+from utils.ui import render_sidebar
 
 df = render_sidebar(get_data())
 
@@ -124,6 +126,37 @@ les *Deny* correspondant aux tentatives bloquées.
 
     st.divider()
 
+    # ── Tendance journalière ────────────────────────────────────────────────────
+    n_days_data = (df["timestamp"].max() - df["timestamp"].min()).days
+    if n_days_data >= 1:
+        st.subheader("Évolution journalière du trafic")
+        with st.expander("💡 Comment lire ce graphique ?"):
+            st.markdown("""
+- Chaque **point** représente le volume de connexions d'une journée.
+- La ligne **verte** = connexions autorisées (*Permit*), la ligne **rouge** = connexions bloquées (*Deny*).
+- Un **pic de Deny** sur une journée peut signaler une vague d'attaques ou un scan massif.
+- Un pic de **Permit** inhabituel mérite aussi attention (exfiltration de données ?).
+""")
+        daily = compute_daily_traffic(df)
+        fig_day = px.line(
+            daily, x="date", y="count", color="action", markers=True,
+            color_discrete_map={"Permit": "#22C55E", "Deny": "#EF4444"},
+            labels={"date": "Date", "count": "Connexions", "action": "Décision"},
+        )
+        fig_day.update_layout(
+            plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+            margin=dict(l=0, r=0, t=10, b=0),
+        )
+        st.plotly_chart(fig_day, use_container_width=True)
+
+        peak_day = daily[daily["action"] == "Deny"].sort_values("count", ascending=False)
+        if not peak_day.empty:
+            st.caption(
+                f"📌 Jour le plus chargé en *Deny* : **{peak_day.iloc[0]['date']}** "
+                f"({int(peak_day.iloc[0]['count']):,} connexions bloquées)."
+            )
+        st.divider()
+
     # ── TOP 5 IPs + TOP 10 ports < 1024 Permit ────────────────────────────────
     col_a, col_b = st.columns(2)
 
@@ -159,14 +192,15 @@ services sont réellement utilisés sur le réseau.
         if tp.empty:
             st.info("Aucun flux Permit sur ports < 1024 avec les filtres actuels.")
         else:
-            fig = px.bar(tp, x="dst_port", y="count",
-                         labels={"dst_port": "Port", "count": "Connexions autorisées"},
+            tp["port_lbl"] = tp["dst_port"].apply(port_label)
+            fig = px.bar(tp, x="port_lbl", y="count",
+                         labels={"port_lbl": "Port", "count": "Connexions autorisées"},
                          color_discrete_sequence=["#22C55E"])
             fig.update_layout(xaxis_type="category",
                               plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
                               margin=dict(l=0, r=0, t=10, b=0))
             st.plotly_chart(fig, use_container_width=True)
-            st.caption(f"📌 Port **{int(tp.iloc[0]['dst_port'])}** : "
+            st.caption(f"📌 **{port_label(int(tp.iloc[0]['dst_port']))}** : "
                        f"{int(tp.iloc[0]['count']):,} connexions autorisées — service le plus sollicité.")
 
     # ── IPs hors plan interne ──────────────────────────────────────────────────
@@ -335,14 +369,15 @@ Un port très ciblé avec beaucoup de *Deny* peut être la cible d'un scan autom
         top_ports = (df_p.groupby(["dst_port", "port_category"], as_index=False)
                      .size().rename(columns={"size": "count"})
                      .sort_values("count", ascending=False).head(15))
-        fig = px.bar(top_ports, x="dst_port", y="count", color="port_category",
-                     labels={"dst_port": "Port", "count": "Connexions", "port_category": "Catégorie"},
+        top_ports["port_lbl"] = top_ports["dst_port"].apply(port_label)
+        fig = px.bar(top_ports, x="port_lbl", y="count", color="port_category",
+                     labels={"port_lbl": "Port", "count": "Connexions", "port_category": "Catégorie"},
                      color_discrete_map=_COLORS)
         fig.update_layout(xaxis_type="category",
                           plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
                           margin=dict(l=0, r=0, t=10, b=0))
         st.plotly_chart(fig, use_container_width=True)
-        st.caption(f"📌 Port **{int(top_ports.iloc[0]['dst_port'])}** est le plus ciblé "
+        st.caption(f"📌 **{port_label(int(top_ports.iloc[0]['dst_port']))}** est le plus ciblé "
                    f"({int(top_ports.iloc[0]['count']):,} connexions).")
 
     # Croisement catégorie × action
@@ -391,6 +426,7 @@ Chaque **point** représente une IP source différente. Sa position et son appar
     else:
         max_f = int(summary["n_flows"].max())
         min_f = int(summary["n_flows"].min())
+        max_d = int(summary["n_dst"].max())
 
         col_s, col_m = st.columns([3, 1])
         with col_s:
@@ -400,6 +436,22 @@ Chaque **point** représente une IP source différente. Sa position et son appar
         filtered = summary[summary["n_flows"] >= threshold]
         with col_m:
             st.metric("IPs affichées", f"{len(filtered):,} / {len(summary):,}")
+
+        # Seuil de détection scanning (ligne verte verticale)
+        col_d, col_nd = st.columns([3, 1])
+        with col_d:
+            dst_threshold = st.slider(
+                "🟢 Seuil scanning — destinations contactées",
+                min_value=1, max_value=max(2, max_d),
+                value=max(1, int(filtered["n_dst"].quantile(0.75))),
+                help=(
+                    "Ligne verte : les IPs à droite de ce seuil ont contacté un grand nombre "
+                    "de destinations distinctes — comportement typique d'un scan réseau."
+                ),
+            )
+        with col_nd:
+            n_scanners = int((filtered["n_dst"] >= dst_threshold).sum())
+            st.metric("IPs ≥ seuil", f"{n_scanners:,}", help="IPs à droite de la ligne verte.")
 
         fig = px.scatter(
             filtered, x="n_dst", y="n_flows",
@@ -413,6 +465,12 @@ Chaque **point** représente une IP source différente. Sa position et son appar
                     "deny_pct": "% Deny (rouge = suspect)"},
             color_continuous_scale="RdYlGn_r", range_color=[0, 100],
         )
+        fig.add_vline(
+            x=dst_threshold, line_dash="solid", line_color="#22C55E", line_width=2,
+            annotation_text="Seuil scanning",
+            annotation_position="top left",
+            annotation_font_color="#22C55E",
+        )
         fig.update_layout(plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
                           margin=dict(l=0, r=0, t=10, b=0))
         st.plotly_chart(fig, use_container_width=True)
@@ -424,6 +482,15 @@ Chaque **point** représente une IP source différente. Sa position et son appar
                 + ", ".join(f"`{ip}`" for ip in high_deny.head(5)["src_ip"])
                 + (" …" if len(high_deny) > 5 else "")
                 + " — Comportement potentiellement malveillant."
+            )
+        if n_scanners > 0:
+            scanners = filtered[filtered["n_dst"] >= dst_threshold].sort_values(
+                "n_dst", ascending=False
+            )
+            st.info(
+                f"🔍 **{n_scanners} IP(s)** au-delà du seuil scanning ({dst_threshold} destinations) : "
+                + ", ".join(f"`{ip}`" for ip in scanners.head(5)["src_ip"])
+                + (" …" if n_scanners > 5 else "")
             )
 
         st.divider()
