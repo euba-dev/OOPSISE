@@ -55,7 +55,9 @@ def generate_iptables_logs(
             np.random.default_rng(seed + 2).integers(
                 8 * 3600, 20 * 3600, n_rows - n_rows // 2
             ).clip(0, hours_span * 3600),
-        ])
+        ]),
+        size=n_rows,
+        replace=False,
     )
     timestamps  = [start + timedelta(seconds=int(s)) for s in offsets]
     src_ips     = [_random_ip(_INTERNAL_NETS, rng) for _ in range(n_rows)]
