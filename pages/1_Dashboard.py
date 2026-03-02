@@ -13,8 +13,6 @@ from utils.helpers import (
 )
 from utils.ui import PAGE_CONFIG, render_sidebar
 
-st.set_page_config(page_title="Dashboard — OPSIE x SISE", **PAGE_CONFIG)
-
 df = render_sidebar(get_data())
 
 st.header("📊 Dashboard")
@@ -29,37 +27,52 @@ with t1:
     deny_pct = compute_deny_ratio(df)
     n_ext    = len(external_ip_accesses(df))
 
-    # Métriques — sans delta
+    # Métriques principales
     c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric("Total flux",            f"{len(df):,}")
-    c2.metric("Taux de Deny",          f"{deny_pct} %")
-    c3.metric("IP sources uniques",    f"{df['src_ip'].nunique():,}")
-    c4.metric("Règles actives",        f"{df['policy_id'].nunique()}")
-    c5.metric("IPs hors plan interne", f"{n_ext:,}")
+    c1.metric("Total flux",            f"{len(df):,}",
+              help="Nombre total de connexions enregistrées par le pare-feu sur la période.")
+    c2.metric("Taux de Deny",          f"{deny_pct} %",
+              help="Part des connexions bloquées par le pare-feu. Un taux élevé peut signaler une activité malveillante.")
+    c3.metric("IP sources uniques",    f"{df['src_ip'].nunique():,}",
+              help="Nombre de machines distinctes ayant généré du trafic.")
+    c4.metric("Règles actives",        f"{df['policy_id'].nunique()}",
+              help="Nombre de règles du pare-feu ayant été déclenchées sur la période.")
+    c5.metric("IPs hors réseau interne", f"{n_ext:,}",
+              help="Flux provenant d'adresses IP extérieures au réseau de l'université.")
 
-    # Aide à la lecture dynamique
+    # Interprétation du taux de Deny
     if deny_pct >= 25:
         st.error(
-            f"🚨 **Taux de Deny critique ({deny_pct}%)** — Plus d'un quart des flux sont bloqués. "
-            "Possible scan massif, brute-force ou DDoS. Investiguer les IPs sources immédiatement."
+            f"🚨 **Taux de Deny critique ({deny_pct}%)** — Plus d'un quart des connexions sont bloquées. "
+            "Cela peut indiquer un scan massif, une attaque par force brute ou un DDoS. "
+            "Il est recommandé d'examiner immédiatement les IP sources les plus actives."
         )
     elif deny_pct >= 15:
         st.warning(
-            f"⚠️ **Taux de Deny élevé ({deny_pct}%)** — Au-dessus du seuil standard (~15%). "
-            "Surveiller les IPs sources et les ports ciblés."
+            f"⚠️ **Taux de Deny élevé ({deny_pct}%)** — En pratique, un taux supérieur à ~15% est souvent "
+            "considéré comme un signal d'alerte à investiguer (ce seuil est indicatif, pas une norme officielle). "
+            "Surveiller les IP sources et les ports les plus ciblés."
         )
     else:
         st.success(
-            f"✅ **Taux de Deny normal ({deny_pct}%)** — Activité réseau standard, aucune anomalie globale."
+            f"✅ **Taux de Deny normal ({deny_pct}%)** — Le trafic bloqué reste dans une proportion habituelle. "
+            "Aucune anomalie globale détectée."
         )
 
     st.divider()
 
-    # Trafic horaire + donut
+    # ── Trafic horaire ─────────────────────────────────────────────────────────
     col_l, col_r = st.columns([2, 1])
 
     with col_l:
-        st.subheader("Trafic par heure")
+        st.subheader("Trafic par heure de la journée")
+        with st.expander("💡 Comment lire ce graphique ?"):
+            st.markdown("""
+- Chaque barre représente une **heure de la journée** (0h à 23h).
+- La **partie verte** = connexions autorisées (*Permit*), la **partie rouge** = connexions bloquées (*Deny*).
+- La **ligne orange pointillée** est un seuil d'alerte automatique : si une heure dépasse 1,5× la moyenne horaire,
+  cela peut indiquer un pic de trafic inhabituel (ex. tentative d'intrusion, scan de réseau).
+""")
         df_h = df.copy()
         df_h["hour"] = df_h["timestamp"].dt.hour
         hourly_action = df_h.groupby(["hour", "action"]).size().reset_index(name="count")
@@ -71,7 +84,7 @@ with t1:
 
         fig = px.bar(hourly_action, x="hour", y="count", color="action", barmode="stack",
                      color_discrete_map={"Permit": "#22C55E", "Deny": "#EF4444"},
-                     labels={"hour": "Heure (UTC)", "count": "Flux"})
+                     labels={"hour": "Heure (UTC)", "count": "Nombre de connexions", "action": "Décision"})
         fig.add_hline(y=threshold_line, line_dash="dash", line_color="orange",
                       annotation_text="Seuil alerte (+50% moy.)",
                       annotation_position="top right")
@@ -84,14 +97,23 @@ with t1:
         if hot_hours:
             st.warning(
                 f"⚠️ Trafic anormalement élevé à : **{', '.join(f'{h}h' for h in hot_hours)}** "
-                f"(>{threshold_line:.0f} flux/h). Possible attaque ou pic de scan."
+                f"(>{threshold_line:.0f} connexions/h). Possible attaque ou pic de scan."
             )
         else:
-            st.caption(f"📌 Pic de trafic à **{peak_h}h** avec {peak_cnt:,} flux — "
-                       "distribution homogène.")
+            st.caption(f"📌 Pic de trafic à **{peak_h}h** avec {peak_cnt:,} connexions — "
+                       "distribution homogène sur la journée.")
 
     with col_r:
         st.subheader("Permit / Deny")
+        with st.expander("💡 Comment lire ce graphique ?"):
+            st.markdown("""
+Ce graphique en anneau montre la **répartition globale** des décisions du pare-feu :
+- 🟢 **Permit** : connexions autorisées
+- 🔴 **Deny** : connexions bloquées
+
+Un réseau sain a généralement une très grande majorité de *Permit*,
+les *Deny* correspondant aux tentatives bloquées.
+""")
         counts = df["action"].value_counts().reset_index()
         counts.columns = ["action", "count"]
         fig = px.pie(counts, names="action", values="count", color="action",
@@ -102,84 +124,129 @@ with t1:
 
     st.divider()
 
-    # TOP 5 IPs + TOP 10 ports <1024 Permit  (§1.5 pt 4)
+    # ── TOP 5 IPs + TOP 10 ports < 1024 Permit ────────────────────────────────
     col_a, col_b = st.columns(2)
 
     with col_a:
         st.subheader("TOP 5 IP sources les plus émettrices")
+        with st.expander("💡 Comment lire ce graphique ?"):
+            st.markdown("""
+Chaque barre représente une **adresse IP source** et le nombre total de connexions qu'elle a générées
+(Permit + Deny confondus). Une IP très active mérite attention : elle peut être légitime (serveur applicatif)
+ou suspecte (scanner de réseau, machine compromise).
+""")
         top5 = top_src_ips(df, n=5)
         fig = px.bar(top5, x="count", y="src_ip", orientation="h",
-                     labels={"src_ip": "IP source", "count": "Flux"},
-                     color="count", color_continuous_scale="Blues")
+                     labels={"src_ip": "IP source", "count": "Nombre de connexions"},
+                     color_discrete_sequence=["#3B82F6"])
         fig.update_layout(yaxis=dict(autorange="reversed"),
                           plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
-                          coloraxis_showscale=False, margin=dict(l=0, r=0, t=10, b=0))
+                          margin=dict(l=0, r=0, t=10, b=0))
         st.plotly_chart(fig, use_container_width=True)
         t1ip = top5.iloc[0]
-        st.caption(f"📌 **{t1ip['src_ip']}** : {t1ip['count']:,} flux émis (plus active).")
+        st.caption(f"📌 **{t1ip['src_ip']}** est la machine la plus active avec {t1ip['count']:,} connexions émises.")
 
     with col_b:
         st.subheader("TOP 10 ports < 1024 autorisés (Permit)")
+        with st.expander("💡 Comment lire ce graphique ?"):
+            st.markdown("""
+Les **ports inférieurs à 1024** sont appelés "well-known ports" : chacun correspond à un service
+réseau standardisé (80 = HTTP, 443 = HTTPS, 22 = SSH, 21 = FTP…). Ce graphique montre
+lesquels sont les plus sollicités parmi les connexions **autorisées**. Cela indique quels
+services sont réellement utilisés sur le réseau.
+""")
         tp = top_permitted_ports_under_1024(df, n=10)
         if tp.empty:
             st.info("Aucun flux Permit sur ports < 1024 avec les filtres actuels.")
         else:
             fig = px.bar(tp, x="dst_port", y="count",
-                         labels={"dst_port": "Port", "count": "Flux"},
+                         labels={"dst_port": "Port", "count": "Connexions autorisées"},
                          color_discrete_sequence=["#22C55E"])
             fig.update_layout(xaxis_type="category",
                               plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
                               margin=dict(l=0, r=0, t=10, b=0))
             st.plotly_chart(fig, use_container_width=True)
             st.caption(f"📌 Port **{int(tp.iloc[0]['dst_port'])}** : "
-                       f"{int(tp.iloc[0]['count']):,} flux Permit.")
+                       f"{int(tp.iloc[0]['count']):,} connexions autorisées — service le plus sollicité.")
 
-    # IPs hors plan interne  (§1.5 pt 4)
+    # ── IPs hors plan interne ──────────────────────────────────────────────────
     ext_df = external_ip_accesses(df)
     if not ext_df.empty:
-        st.subheader(f"Accès depuis IPs hors plan interne — {len(ext_df):,} flux")
+        st.subheader(f"Accès depuis IPs hors réseau interne — {len(ext_df):,} flux")
+        with st.expander("💡 Comment lire ce graphique ?"):
+            st.markdown("""
+Ce graphique recense les connexions provenant d'**adresses IP externes** (internet), c'est-à-dire
+hors du réseau de l'université. Chaque barre représente une IP externe et le nombre de connexions
+qu'elle a tenté d'établir, ventilé entre autorisées (🟢) et bloquées (🔴).
+
+Une IP externe générant beaucoup de *Deny* peut être un scanner automatique ou une tentative d'intrusion.
+Une IP externe avec des *Permit* signifie qu'elle a réussi à établir des connexions — à vérifier
+qu'elles correspondent à des services intentionnellement ouverts vers internet.
+""")
         ext_agg = (ext_df.groupby(["src_ip", "action"], as_index=False)
                    .size().rename(columns={"size": "count"})
                    .sort_values("count", ascending=False).head(20))
         fig = px.bar(ext_agg, x="src_ip", y="count", color="action",
                      color_discrete_map={"Permit": "#22C55E", "Deny": "#EF4444"},
-                     labels={"src_ip": "IP source", "count": "Flux"})
+                     labels={"src_ip": "IP source (externe)", "count": "Connexions", "action": "Décision"})
         fig.update_layout(plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
                           margin=dict(l=0, r=0, t=10, b=0))
         st.plotly_chart(fig, use_container_width=True)
         n_permit_ext = len(ext_df[ext_df["action"] == "Permit"])
         if n_permit_ext > 0:
-            st.warning(f"⚠️ {n_permit_ext:,} flux **Permit** depuis des IPs hors plan interne — "
-                       "À vérifier avec les règles de filtrage.")
+            st.warning(f"⚠️ {n_permit_ext:,} connexions **autorisées** depuis des IPs extérieures au réseau interne — "
+                       "Vérifier qu'elles correspondent à des services intentionnellement accessibles depuis internet.")
 
     st.divider()
 
-    # ── Classement des règles firewall ────────────────────────────────────────
+    # ── Classement des règles firewall ─────────────────────────────────────────
     col_r1, col_r2 = st.columns(2)
 
     with col_r1:
-        st.subheader("Règles firewall les plus sollicitées")
+        st.subheader("Règles firewall les plus déclenchées")
+        with st.expander("💡 Comment lire ce graphique ?"):
+            st.markdown("""
+Le pare-feu possède une liste numérotée de **règles** (aussi appelées *policies*). Quand un flux
+réseau arrive, le pare-feu parcourt ces règles dans l'ordre et applique la première qui correspond.
+
+Ce graphique montre combien de fois chaque règle a été déclenchée. Une règle très sollicitée
+traite beaucoup de trafic — ce n'est pas forcément suspect, cela dépend de ce que fait la règle.
+
+**Règle 999** : c'est la règle "catch-all" (ou *cleanup*). Elle est placée en dernier et bloque
+automatiquement tout trafic qui n'a pas correspondu à une règle précédente. Si elle est très
+sollicitée, cela signifie qu'il y a beaucoup de trafic non prévu dans la configuration du pare-feu.
+""")
         rule_total = (df.groupby("policy_id").size()
                       .reset_index(name="total").sort_values("total", ascending=False))
         fig = px.bar(rule_total.head(15), x="policy_id", y="total",
-                     labels={"policy_id": "Règle (policy_id)", "total": "Flux"},
-                     color="total", color_continuous_scale="Purples")
+                     labels={"policy_id": "Numéro de règle", "total": "Nombre de déclenchements"},
+                     color_discrete_sequence=["#8B5CF6"])
         fig.update_layout(xaxis_type="category",
                           plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
-                          coloraxis_showscale=False, margin=dict(l=0, r=0, t=10, b=0))
+                          margin=dict(l=0, r=0, t=10, b=0))
         st.plotly_chart(fig, use_container_width=True)
         top_rule = rule_total.iloc[0]
-        st.caption(f"📌 Règle **{top_rule['policy_id']}** : {int(top_rule['total']):,} flux. "
-                   "Règle 999 = cleanup (catch-all).")
+        is_cleanup = top_rule['policy_id'] == "999"
+        st.caption(
+            f"📌 La règle **{top_rule['policy_id']}** a été déclenchée {int(top_rule['total']):,} fois — "
+            + ("c'est la règle *catch-all* qui bloque tout trafic non explicitement autorisé." if is_cleanup
+               else "c'est la règle qui a traité le plus de trafic sur la période.")
+        )
 
     with col_r2:
-        st.subheader("Règles avec le plus de Deny")
+        st.subheader("Règles avec le plus de connexions bloquées")
+        with st.expander("💡 Comment lire ce graphique ?"):
+            st.markdown("""
+Ce graphique se concentre uniquement sur les connexions **bloquées** (*Deny*), et montre
+quelles règles du pare-feu sont responsables de ces blocages. Une règle qui bloque beaucoup
+peut indiquer qu'un certain type de trafic est fréquemment tenté mais interdit.
+""")
         deny_per_rule = (df[df["action"] == "Deny"]
                          .groupby("policy_id").size()
                          .reset_index(name="n_deny")
                          .sort_values("n_deny", ascending=False).head(10))
         fig = px.bar(deny_per_rule, x="policy_id", y="n_deny",
-                     labels={"policy_id": "Règle", "n_deny": "Flux Deny"},
+                     labels={"policy_id": "Numéro de règle", "n_deny": "Connexions bloquées"},
                      color_discrete_sequence=["#EF4444"])
         fig.update_layout(xaxis_type="category",
                           plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
@@ -188,29 +255,38 @@ with t1:
 
 
 # =============================================================================
-# TAB 2 — PORTS & PROTOCOLES  (§1.5 pt 1)
+# TAB 2 — PORTS & PROTOCOLES
 # =============================================================================
 
 with t2:
     df_p   = add_port_category(df)
     _COLORS = {"Well-known": "#6366F1", "Registered": "#F59E0B", "Dynamic/Private": "#10B981"}
 
-    # Histogramme protocoles
-    st.subheader("Flux par protocole et action")
+    st.subheader("Flux par protocole et décision du pare-feu")
+    with st.expander("💡 Comment lire ce graphique ?"):
+        st.markdown("""
+- **TCP** (*Transmission Control Protocol*) : protocole fiable, utilisé pour le web, SSH, email…
+  Il garantit que les données arrivent correctement.
+- **UDP** (*User Datagram Protocol*) : protocole rapide mais sans garantie, utilisé pour le DNS,
+  la vidéo en streaming, les jeux en ligne…
+
+Ce graphique montre pour chaque protocole combien de connexions ont été autorisées (🟢) ou bloquées (🔴).
+Un taux de Deny élevé sur UDP peut indiquer des scans réseau ou du trafic DNS non sollicité.
+""")
     proto_cross = (df.groupby(["proto", "action"], as_index=False)
                    .size().rename(columns={"size": "count"}))
     fig = px.bar(proto_cross, x="proto", y="count", color="action", barmode="group",
                  color_discrete_map={"Permit": "#22C55E", "Deny": "#EF4444"},
-                 labels={"proto": "Protocole", "count": "Flux"})
+                 labels={"proto": "Protocole", "count": "Nombre de connexions", "action": "Décision"})
     fig.update_layout(plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
                       margin=dict(l=0, r=0, t=10, b=0))
     st.plotly_chart(fig, use_container_width=True)
     top_proto     = df.groupby("proto")["proto"].count().idxmax()
     deny_by_proto = df[df["action"] == "Deny"].groupby("proto").size()
     st.caption(
-        f"📌 **{top_proto}** domine le trafic. "
-        f"TCP : {deny_by_proto.get('TCP', 0):,} Deny · "
-        f"UDP : {deny_by_proto.get('UDP', 0):,} Deny."
+        f"📌 **{top_proto}** est le protocole dominant. "
+        f"Connexions bloquées — TCP : {deny_by_proto.get('TCP', 0):,} · "
+        f"UDP : {deny_by_proto.get('UDP', 0):,}."
     )
 
     st.divider()
@@ -218,58 +294,95 @@ with t2:
     col_a, col_b = st.columns(2)
 
     with col_a:
-        st.subheader("RFC 6056 — Catégories de port")
+        st.subheader("Catégories de ports (RFC 6056)")
+        with st.expander("💡 Comment lire ce graphique ?"):
+            st.markdown("""
+Les ports réseau sont divisés en 3 grandes catégories selon la norme RFC 6056 :
+- 🟣 **Well-known (0–1023)** : ports réservés aux services standards (HTTP, SSH, DNS…)
+- 🟡 **Registered (1024–49151)** : ports pour des applications connues (MySQL, Redis…)
+- 🟢 **Dynamic/Private (49152–65535)** : ports temporaires, utilisés par les connexions sortantes
+
+Un trafic massif vers des ports *Dynamic/Private* peut indiquer des communications
+non standard ou des scans aléatoires.
+""")
         dist = port_category_distribution(df_p)
         fig = px.pie(dist, names="port_category", values="count",
                      color="port_category", color_discrete_map=_COLORS, hole=0.4)
         fig.update_layout(margin=dict(l=0, r=0, t=10, b=0))
         st.plotly_chart(fig, use_container_width=True)
         st.caption(
-            f"📌 Les ports **{dist.iloc[0]['port_category']}** dominent "
-            f"({int(dist.iloc[0]['count']):,} flux)."
+            f"📌 Les ports **{dist.iloc[0]['port_category']}** représentent la majorité du trafic "
+            f"({int(dist.iloc[0]['count']):,} connexions)."
         )
-        with st.expander("Définitions RFC 6056"):
+        with st.expander("Récapitulatif des plages de ports"):
             st.markdown(
-                "| Plage | Catégorie | Exemples |\n|---|---|---|\n"
-                "| 0 – 1023 | **Well-known** | HTTP (80), SSH (22), DNS (53) |\n"
-                "| 1024 – 49151 | **Registered** | MySQL (3306), Redis (6379) |\n"
-                "| 49152 – 65535 | **Dynamic/Private** | Ports éphémères |"
+                "| Plage | Catégorie | Exemples de services |\n|---|---|---|\n"
+                "| 0 – 1023 | **Well-known** | HTTP (80), HTTPS (443), SSH (22), DNS (53), FTP (21) |\n"
+                "| 1024 – 49151 | **Registered** | MySQL (3306), Redis (6379), RDP (3389) |\n"
+                "| 49152 – 65535 | **Dynamic/Private** | Ports éphémères (connexions sortantes) |"
             )
 
     with col_b:
-        st.subheader("TOP 15 ports ciblés")
+        st.subheader("TOP 15 ports les plus ciblés")
+        with st.expander("💡 Comment lire ce graphique ?"):
+            st.markdown("""
+Ce graphique montre les 15 ports qui reçoivent le plus de connexions (toutes décisions confondues).
+La couleur indique la catégorie du port (🟣 Well-known, 🟡 Registered, 🟢 Dynamic/Private).
+
+Un port très ciblé avec beaucoup de *Deny* peut être la cible d'un scan automatisé
+(ex. le port 22/SSH est souvent scanné par des robots cherchant à se connecter par force brute).
+""")
         top_ports = (df_p.groupby(["dst_port", "port_category"], as_index=False)
                      .size().rename(columns={"size": "count"})
                      .sort_values("count", ascending=False).head(15))
         fig = px.bar(top_ports, x="dst_port", y="count", color="port_category",
-                     labels={"dst_port": "Port", "count": "Flux", "port_category": "Catégorie"},
+                     labels={"dst_port": "Port", "count": "Connexions", "port_category": "Catégorie"},
                      color_discrete_map=_COLORS)
         fig.update_layout(xaxis_type="category",
                           plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
                           margin=dict(l=0, r=0, t=10, b=0))
         st.plotly_chart(fig, use_container_width=True)
         st.caption(f"📌 Port **{int(top_ports.iloc[0]['dst_port'])}** est le plus ciblé "
-                   f"({int(top_ports.iloc[0]['count']):,} flux).")
+                   f"({int(top_ports.iloc[0]['count']):,} connexions).")
 
     # Croisement catégorie × action
-    st.subheader("Catégorie de port × Action firewall")
+    st.subheader("Catégorie de port × Décision du pare-feu")
+    with st.expander("💡 Comment lire ce graphique ?"):
+        st.markdown("""
+Ce graphique croise les **catégories de ports** avec la **décision du pare-feu**.
+Il permet de voir, par exemple, si les tentatives sur les ports *Well-known* sont majoritairement
+autorisées (trafic légitime vers des services web) ou bloquées (tentatives d'intrusion).
+""")
     cross = (df_p.groupby(["port_category", "action"], as_index=False)
              .size().rename(columns={"size": "count"}))
     fig = px.bar(cross, x="port_category", y="count", color="action", barmode="group",
                  color_discrete_map={"Permit": "#22C55E", "Deny": "#EF4444"},
-                 labels={"port_category": "Catégorie", "count": "Flux"})
+                 labels={"port_category": "Catégorie de port", "count": "Connexions", "action": "Décision"})
     fig.update_layout(plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
                       margin=dict(l=0, r=0, t=10, b=0))
     st.plotly_chart(fig, use_container_width=True)
 
 
 # =============================================================================
-# TAB 3 — IP EXPLORER  (§1.5 pt 3)
+# TAB 3 — IP EXPLORER
 # =============================================================================
 
 with t3:
-    st.subheader("Visualisation interactive par IP source")
-    st.caption("Chaque point = une IP source · Taille = volume de flux · Couleur = % Deny")
+    st.subheader("Exploration interactive par IP source")
+    with st.expander("💡 Comment lire ce graphique ?"):
+        st.markdown("""
+Chaque **point** représente une IP source différente. Sa position et son apparence donnent des informations :
+
+- **Axe horizontal (X)** : nombre de destinations distinctes contactées par cette IP.
+  Une IP qui contacte beaucoup de destinations différentes peut être en train de *scanner* le réseau.
+- **Axe vertical (Y)** : volume total de connexions émises par cette IP.
+- **Taille du point** : plus le point est grand, plus l'IP a émis de connexions.
+- **Couleur** : du 🟢 vert (0% de Deny) au 🔴 rouge (100% de Deny).
+  Une IP rouge = toutes ses connexions sont bloquées → comportement très suspect.
+  Une IP verte = toutes ses connexions sont autorisées → probablement légitime.
+
+**Cas à surveiller** : points rouges, grands, et/ou très à droite (beaucoup de destinations).
+""")
 
     summary = ip_traffic_summary(df)
 
@@ -281,7 +394,7 @@ with t3:
 
         col_s, col_m = st.columns([3, 1])
         with col_s:
-            threshold = st.slider("Afficher les IPs avec au moins N flux",
+            threshold = st.slider("Afficher les IPs avec au moins N connexions",
                                   min_value=min_f, max_value=max_f,
                                   value=min_f, step=max(1, (max_f - min_f) // 50))
         filtered = summary[summary["n_flows"] >= threshold]
@@ -295,8 +408,9 @@ with t3:
             hover_data={"n_dst": True, "n_flows": True,
                         "n_deny": True, "n_permit": True,
                         "deny_pct": ":.1f", "src_ip": False},
-            labels={"n_dst": "Destinations uniques",
-                    "n_flows": "Volume de flux", "deny_pct": "% Deny"},
+            labels={"n_dst":    "Destinations uniques contactées",
+                    "n_flows":  "Volume total de connexions",
+                    "deny_pct": "% Deny (rouge = suspect)"},
             color_continuous_scale="RdYlGn_r", range_color=[0, 100],
         )
         fig.update_layout(plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
@@ -306,25 +420,25 @@ with t3:
         high_deny = filtered[filtered["deny_pct"] >= 50]
         if not high_deny.empty:
             st.warning(
-                f"⚠️ **{len(high_deny)} IP(s)** avec >50% de Deny : "
+                f"⚠️ **{len(high_deny)} IP(s)** avec plus de 50% de connexions bloquées : "
                 + ", ".join(f"`{ip}`" for ip in high_deny.head(5)["src_ip"])
                 + (" …" if len(high_deny) > 5 else "")
                 + " — Comportement potentiellement malveillant."
             )
 
         st.divider()
-        st.subheader("Détail d'une IP")
+        st.subheader("Détail d'une IP source")
         selected = st.selectbox(
-            "Sélectionner une IP",
+            "Sélectionner une IP à analyser",
             filtered.sort_values("n_flows", ascending=False)["src_ip"].tolist(),
         )
         if selected:
             row = filtered[filtered["src_ip"] == selected].iloc[0]
             c1, c2, c3, c4 = st.columns(4)
-            c1.metric("Flux total",   f"{row['n_flows']:,}")
-            c2.metric("Destinations", f"{row['n_dst']:,}")
-            c3.metric("Permit",       f"{row['n_permit']:,}")
-            c4.metric("Deny",         f"{row['n_deny']:,}")
+            c1.metric("Connexions totales", f"{row['n_flows']:,}")
+            c2.metric("Destinations uniques", f"{row['n_dst']:,}")
+            c3.metric("Autorisées (Permit)", f"{row['n_permit']:,}")
+            c4.metric("Bloquées (Deny)",     f"{row['n_deny']:,}")
 
             ip_df = df[df["src_ip"] == selected]
             cl, cr = st.columns(2)
@@ -335,8 +449,8 @@ with t3:
                          .sort_values("count", ascending=False).head(10))
                 fig2 = px.bar(dst_c, x="dst_ip", y="count", color="action",
                               color_discrete_map={"Permit": "#22C55E", "Deny": "#EF4444"},
-                              labels={"dst_ip": "IP dest.", "count": "Flux"},
-                              title="Top 10 destinations")
+                              labels={"dst_ip": "IP destination", "count": "Connexions", "action": "Décision"},
+                              title=f"Top 10 destinations contactées par {selected}")
                 fig2.update_layout(plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
                                    margin=dict(l=0, r=0, t=30, b=0))
                 st.plotly_chart(fig2, use_container_width=True)
@@ -347,8 +461,8 @@ with t3:
                           .sort_values("count", ascending=False).head(10))
                 fig3 = px.bar(port_c, x="dst_port", y="count", color="action",
                               color_discrete_map={"Permit": "#22C55E", "Deny": "#EF4444"},
-                              labels={"dst_port": "Port", "count": "Flux"},
-                              title="Top 10 ports ciblés")
+                              labels={"dst_port": "Port ciblé", "count": "Connexions", "action": "Décision"},
+                              title=f"Top 10 ports ciblés par {selected}")
                 fig3.update_layout(xaxis_type="category",
                                    plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
                                    margin=dict(l=0, r=0, t=30, b=0))

@@ -14,9 +14,7 @@ except ImportError:
 
 from utils.data_loader import get_data
 from utils.helpers import compute_deny_ratio, external_ip_accesses, top_src_ips
-from utils.ui import PAGE_CONFIG, render_sidebar
-
-st.set_page_config(page_title="IA & ML — OPSIE x SISE", **PAGE_CONFIG)
+from utils.ui import render_sidebar
 
 df = render_sidebar(get_data())
 
@@ -34,18 +32,46 @@ tab_if, tab_mistral = st.tabs([
 
 with tab_if:
     st.markdown(
-        "**Isolation Forest** détecte les flux réseau au comportement atypique "
-        "(scans de ports, brute-force, trafic inhabituel)."
+        "**Isolation Forest** est un algorithme de détection d'anomalies. "
+        "Il analyse chaque connexion réseau et identifie celles qui se comportent de manière atypique "
+        "par rapport au reste du trafic (ex. : port inhabituel, heure anormale, protocole inattendu)."
     )
+    with st.expander("💡 Comment fonctionne Isolation Forest ?"):
+        st.markdown("""
+L'algorithme **Isolation Forest** fonctionne en "isolant" les points de données :
+- Il découpe aléatoirement les données en partitions successives.
+- Les connexions **anormales** (rares ou inhabituelles) sont isolées rapidement, en peu de découpages.
+- Les connexions **normales** (fréquentes) nécessitent beaucoup plus de découpages pour être isolées.
+
+Chaque connexion reçoit un **score d'anomalie** : plus il est élevé, plus la connexion est atypique.
+
+**Caractéristiques analysées ici :**
+- Port de destination (certains ports sont rarement utilisés)
+- Heure de la connexion (trafic nocturne inhabituel ?)
+- Protocole (TCP ou UDP)
+- Décision du pare-feu (Permit ou Deny)
+""")
 
     col_p, col_r = st.columns([1, 3])
 
     with col_p:
         contamination = st.slider(
-            "Taux d'anomalie estimé", 0.01, 0.20, 0.05, 0.01,
-            help="Proportion attendue de flux anormaux (5% par défaut)")
-        n_est = st.slider("Nb d'estimateurs", 50, 300, 100, 50)
-        run_btn = st.button("▶ Lancer", type="primary", use_container_width=True)
+            "Proportion de flux suspects attendue",
+            0.01, 0.20, 0.05, 0.01,
+            help=(
+                "Ce paramètre indique à l'algorithme quelle fraction des connexions "
+                "vous pensez être anormales. À 5% (valeur par défaut), 1 connexion sur 20 "
+                "sera classée comme suspecte. Plus ce nombre est élevé, plus l'algorithme "
+                "sera sensible et détectera davantage d'anomalies — mais risque aussi de "
+                "produire de faux positifs (connexions normales marquées comme suspectes)."
+            )
+        )
+        n_est = st.slider(
+            "Nombre d'arbres de décision",
+            50, 300, 100, 50,
+            help="Plus il y a d'arbres, plus l'analyse est précise — mais plus lente. 100 est un bon compromis."
+        )
+        run_btn = st.button("▶ Lancer l'analyse", type="primary", use_container_width=True)
 
     with col_r:
         if run_btn or "if_result" not in st.session_state:
@@ -80,19 +106,30 @@ with tab_if:
 
         if ratio > 20:
             st.warning(
-                f"⚠️ {ratio:.1f}% de flux marqués anomalies — Taux élevé. "
-                "Réduire le paramètre 'Taux d'anomalie estimé' ou vérifier les données.")
+                f"⚠️ {ratio:.1f}% de flux marqués comme suspects — Taux élevé. "
+                "Réduire le paramètre 'Proportion de flux suspects attendue' ou vérifier les données.")
         else:
             st.info(f"ℹ️ {n_anom:,} flux atypiques ({ratio:.1f}%) identifiés.")
 
+        with st.expander("💡 Comment lire ce graphique ?"):
+            st.markdown("""
+- Chaque **point** représente une connexion réseau.
+- L'**axe horizontal** indique le port de destination ciblé.
+- L'**axe vertical** indique le **score d'anomalie** : plus il est haut, plus la connexion est inhabituelle.
+- 🔴 **Rouge** = connexion classée comme **suspecte** par l'algorithme.
+- 🔵 **Bleu** = connexion classée comme **normale**.
+
+Les points rouges en haut du graphique sont les plus prioritaires à investiguer.
+Passez la souris sur un point pour voir les détails de la connexion.
+""")
         fig = px.scatter(
             df_res.sample(min(2000, len(df_res)), random_state=42),
             x="dst_port", y="anomaly_score", color="anomaly",
             color_discrete_map={True: "#EF4444", False: "#3B82F6"},
             hover_data=["src_ip", "dst_ip", "proto", "action"],
-            labels={"dst_port": "Port", "anomaly_score": "Score d'anomalie",
-                    "anomaly": "Anomalie"},
-            opacity=0.6, title="Distribution des scores (rouge = suspect)",
+            labels={"dst_port": "Port de destination", "anomaly_score": "Score d'anomalie",
+                    "anomaly": "Suspect ?"},
+            opacity=0.6, title="Distribution des scores d'anomalie (🔴 rouge = suspect, 🔵 bleu = normal)",
         )
         fig.update_layout(plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
                           margin=dict(l=0, r=0, t=30, b=0))
