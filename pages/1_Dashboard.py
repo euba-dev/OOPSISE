@@ -1,6 +1,7 @@
 import os
 
 import plotly.express as px
+import plotly.graph_objects as go
 import streamlit as st
 
 from utils.data_loader import get_data
@@ -20,6 +21,112 @@ from utils.ui import render_sidebar
 df = render_sidebar(get_data())
 
 st.header("📊 Dashboard")
+
+# ── Priorités métier ────────────────────────────────────────────────────────
+st.subheader("🧠 Priorités métier")
+
+_api_key = os.getenv("MISTRAL_API_KEY", "")
+if not _api_key:
+    st.info(
+        "Configurer `MISTRAL_API_KEY` dans `.env` pour activer l'analyse.",
+        icon="🔑",
+    )
+else:
+    # Empreinte des filtres courants pour détecter si l'analyse est périmée
+    _cur_hash = (
+        f"{len(df)}|{compute_deny_ratio(df)}"
+        f"|{df['timestamp'].min().date()}|{df['timestamp'].max().date()}"
+    )
+    _stale = (
+        "priorities_result" in st.session_state
+        and st.session_state.get("priorities_hash", "") != _cur_hash
+    )
+
+    with st.container(border=True):
+        _col_desc, _col_btn = st.columns([5, 1])
+        _has_result  = "priorities_result" in st.session_state
+        _up_to_date  = _has_result and not _stale
+        with _col_desc:
+            if _stale:
+                st.markdown("⚠️ _Les filtres ont changé — cliquez sur **Actualiser** pour relancer l'analyse._")
+            elif _up_to_date:
+                st.markdown("✅ _Analyse à jour avec les données filtrées ci-dessous._")
+            else:
+                st.markdown("_Mistral identifie les priorités métier sur les données filtrées ci-dessous._")
+        with _col_btn:
+            run_prio = st.button(
+                "🔄 Actualiser" if _stale else "🧠 Analyser",
+                type="secondary",
+                disabled=_up_to_date,
+                use_container_width=True,
+            )
+
+        if run_prio or "priorities_result" in st.session_state:
+            if run_prio:
+                _deny_p   = compute_deny_ratio(df)
+                _top3_ips = top_src_ips(df, 3)["src_ip"].tolist()
+                _top3_pts = (
+                    df.groupby("dst_port").size()
+                    .sort_values(ascending=False).head(3).index.tolist()
+                )
+                _n_ext    = len(external_ip_accesses(df))
+                _h_totals = df.groupby(df["timestamp"].dt.hour).size()
+                _peak_h   = int(_h_totals.idxmax()) if not _h_totals.empty else 0
+                _top_rule = (
+                    df.groupby("policy_id").size()
+                    .sort_values(ascending=False).index[0]
+                    if not df.empty else "—"
+                )
+                _d_min = df["timestamp"].min().strftime("%d/%m/%Y")
+                _d_max = df["timestamp"].max().strftime("%d/%m/%Y")
+
+                _prompt = f"""Tu es un analyste SOC expérimenté. Voici les statistiques de logs firewall filtrés.
+
+PÉRIODE : {_d_min} → {_d_max} | {len(df):,} flux analysés
+MÉTRIQUES :
+- Taux de Deny : {_deny_p}%
+- Top 3 IPs sources actives : {_top3_ips}
+- Top 3 ports les plus ciblés : {[port_label(p) for p in _top3_pts]}
+- Flux depuis IPs externes : {_n_ext:,}
+- Heure de pic de trafic : {_peak_h}h
+- Règle firewall la plus sollicitée : {_top_rule}
+
+CONSIGNE STRICTE — réponds UNIQUEMENT avec 3 à 5 lignes. Chaque ligne DOIT se terminer par la référence entre parenthèses.
+Format OBLIGATOIRE (respecte-le à la lettre) :
+🔴 **[Critique]** action immédiate en 8 mots max — justification (voir onglet Vue générale > Taux de blocage)
+🟡 **[Attention]** à surveiller en 8 mots max — justification (voir onglet Ports & Protocoles > TOP 15 ports)
+🟢 **[Info]** contexte utile en 8 mots max — justification (voir onglet IP Explorer > Scatter interactif)
+
+Les lignes ci-dessus sont des EXEMPLES de format. Adapte le contenu aux données réelles.
+Onglets et graphiques disponibles :
+- Vue générale : Trafic horaire, Carte thermique, Taux de blocage, TOP 5 IPs, TOP 10 ports Permit, IPs externes, Règles firewall
+- Ports & Protocoles : Flux par protocole, Catégories RFC 6056, TOP 15 ports, Catégorie × Décision
+- IP Explorer : Scatter interactif
+
+Aucune introduction. Aucune conclusion. Seulement les priorités."""
+
+                try:
+                    from mistralai import Mistral
+
+                    with st.spinner("Mistral analyse les priorités…"):
+                        client = Mistral(api_key=_api_key)
+                        resp = client.chat.complete(
+                            model="mistral-small-latest",
+                            messages=[{"role": "user", "content": _prompt}],
+                        )
+                        st.session_state["priorities_result"] = resp.choices[0].message.content
+                        st.session_state["priorities_hash"]   = _cur_hash
+                except Exception as e:
+                    st.error(f"Erreur Mistral : {e}")
+
+        if "priorities_result" in st.session_state:
+            if _stale and not run_prio:
+                st.caption("_Résultat de la dernière analyse — filtres modifiés depuis_")
+            _prio_lines = [l for l in st.session_state["priorities_result"].split("\n") if l.strip()]
+            st.markdown("\n\n".join(_prio_lines))
+            st.caption("_Généré par Mistral AI · mistral-small-latest_")
+
+st.divider()
 
 t1, t2, t3 = st.tabs(["Vue générale", "🔌 Ports & Protocoles", "🌐 IP Explorer"])
 
@@ -104,59 +211,89 @@ with t1:
                 f"(>{threshold_line:.0f} connexions/h). Possible attaque ou pic de scan."
             )
         else:
-            st.caption(f"📌 Pic de trafic à **{peak_h}h** avec {peak_cnt:,} connexions — "
-                       "distribution homogène sur la journée.")
+            st.markdown(f"📌 Pic de trafic à **{peak_h}h** avec **{peak_cnt:,}** connexions — "
+                        "distribution homogène sur la journée.")
 
     with col_r:
-        st.subheader("Permit / Deny")
+        st.subheader("Taux de blocage")
         with st.expander("💡 Comment lire ce graphique ?"):
             st.markdown("""
-Ce graphique en anneau montre la **répartition globale** des décisions du pare-feu :
-- 🟢 **Permit** : connexions autorisées
-- 🔴 **Deny** : connexions bloquées
-
-Un réseau sain a généralement une très grande majorité de *Permit*,
-les *Deny* correspondant aux tentatives bloquées.
+La **jauge** indique le pourcentage de connexions bloquées sur la période.
+- 🟢 Zone verte (0–15 %) : taux normal
+- 🟡 Zone jaune (15–25 %) : signal d'alerte à surveiller
+- 🔴 Zone rouge (25–50 %) : taux critique — investigation immédiate
 """)
-        counts = df["action"].value_counts().reset_index()
-        counts.columns = ["action", "count"]
-        fig = px.pie(counts, names="action", values="count", color="action",
-                     color_discrete_map={"Permit": "#4ADE80", "Deny": "#F87171"}, hole=0.45)
-        fig.update_layout(margin=dict(l=0, r=0, t=10, b=0),
-                          legend=dict(orientation="h", yanchor="bottom", y=-0.2))
-        st.plotly_chart(fig, use_container_width=True)
+        _gc = "#F87171" if deny_pct >= 25 else "#FBBF24" if deny_pct >= 15 else "#4ADE80"
+        fig_g = go.Figure(go.Indicator(
+            mode="gauge+number",
+            value=deny_pct,
+            number={"suffix": "%", "font": {"size": 32}},
+            title={"text": "Deny", "font": {"size": 13}},
+            gauge={
+                "axis": {"range": [0, 50], "tickwidth": 1},
+                "bar": {"color": _gc, "thickness": 0.6},
+                "bgcolor": "rgba(0,0,0,0)",
+                "steps": [
+                    {"range": [0, 15],  "color": "rgba(74,222,128,0.12)"},
+                    {"range": [15, 25], "color": "rgba(251,191,36,0.12)"},
+                    {"range": [25, 50], "color": "rgba(248,113,113,0.12)"},
+                ],
+                "threshold": {
+                    "line": {"color": "#FBBF24", "width": 2},
+                    "thickness": 0.75,
+                    "value": 15,
+                },
+            },
+        ))
+        fig_g.update_layout(
+            paper_bgcolor="rgba(0,0,0,0)",
+            margin=dict(l=10, r=10, t=30, b=10),
+            height=230,
+        )
+        st.plotly_chart(fig_g, use_container_width=True)
 
     st.divider()
 
-    # ── Tendance journalière ────────────────────────────────────────────────────
+    # ── Carte thermique heure × jour ────────────────────────────────────────────
     n_days_data = (df["timestamp"].max() - df["timestamp"].min()).days
     if n_days_data >= 1:
-        st.subheader("Évolution journalière du trafic")
+        st.subheader("Carte thermique du trafic — heure × jour")
         with st.expander("💡 Comment lire ce graphique ?"):
             st.markdown("""
-- Chaque **point** représente le volume de connexions d'une journée.
-- La ligne **verte** = connexions autorisées (*Permit*), la ligne **rouge** = connexions bloquées (*Deny*).
-- Un **pic de Deny** sur une journée peut signaler une vague d'attaques ou un scan massif.
-- Un pic de **Permit** inhabituel mérite aussi attention (exfiltration de données ?).
+- Chaque **cellule** représente le volume total de connexions pour une heure précise d'un jour de la semaine.
+- Plus la cellule est **foncée**, plus le trafic est intense à ce créneau.
+- Chercher des **patterns anormaux** : activité nocturne intense, pic le week-end, heure inhabituelle.
+- Ce graphique cumule toutes les occurrences de ce jour/heure sur la période analysée.
 """)
-        daily = compute_daily_traffic(df)
-        fig_day = px.line(
-            daily, x="date", y="count", color="action", markers=True,
-            color_discrete_map={"Permit": "#4ADE80", "Deny": "#F87171"},
-            labels={"date": "Date", "count": "Connexions", "action": "Décision"},
+        _DAYS_FR = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi", "Dimanche"]
+        _hm = df.copy()
+        _hm["hour"] = _hm["timestamp"].dt.hour
+        _hm["day"]  = _hm["timestamp"].dt.dayofweek.map(dict(enumerate(_DAYS_FR)))
+        _pivot = (
+            _hm.groupby(["day", "hour"]).size()
+            .reset_index(name="count")
+            .pivot(index="day", columns="hour", values="count")
+            .fillna(0)
+            .reindex(index=[d for d in _DAYS_FR if d in _hm["day"].unique()])
+            .reindex(columns=range(24), fill_value=0)
         )
-        fig_day.update_layout(
+        import numpy as _np
+        fig_hm = px.imshow(
+            _np.log1p(_pivot),
+            color_continuous_scale="Blues",
+            labels={"x": "Heure", "y": "Jour", "color": "log(Connexions+1)"},
+            aspect="auto",
+        )
+        fig_hm.update_layout(
             plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
             margin=dict(l=0, r=0, t=10, b=0),
         )
-        st.plotly_chart(fig_day, use_container_width=True)
-
-        peak_day = daily[daily["action"] == "Deny"].sort_values("count", ascending=False)
-        if not peak_day.empty:
-            st.caption(
-                f"📌 Jour le plus chargé en *Deny* : **{peak_day.iloc[0]['date']}** "
-                f"({int(peak_day.iloc[0]['count']):,} connexions bloquées)."
-            )
+        st.plotly_chart(fig_hm, use_container_width=True)
+        _peak_cell = _hm.groupby(["day", "hour"]).size().idxmax()
+        st.markdown(
+            f"📌 Pic d'activité : **{_peak_cell[0]}** à **{_peak_cell[1]}h** "
+            "— créneau le plus chargé sur la période."
+        )
         st.divider()
 
     # ── TOP 5 IPs + TOP 10 ports < 1024 Permit ────────────────────────────────
@@ -179,7 +316,7 @@ ou suspecte (scanner de réseau, machine compromise).
                           margin=dict(l=0, r=0, t=10, b=0))
         st.plotly_chart(fig, use_container_width=True)
         t1ip = top5.iloc[0]
-        st.caption(f"📌 **{t1ip['src_ip']}** est la machine la plus active avec {t1ip['count']:,} connexions émises.")
+        st.markdown(f"📌 **{t1ip['src_ip']}** est la machine la plus active — **{t1ip['count']:,}** connexions émises.")
 
     with col_b:
         st.subheader("TOP 10 ports < 1024 autorisés (Permit)")
@@ -202,8 +339,8 @@ services sont réellement utilisés sur le réseau.
                               plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
                               margin=dict(l=0, r=0, t=10, b=0))
             st.plotly_chart(fig, use_container_width=True)
-            st.caption(f"📌 **{port_label(int(tp.iloc[0]['dst_port']))}** : "
-                       f"{int(tp.iloc[0]['count']):,} connexions autorisées — service le plus sollicité.")
+            st.markdown(f"📌 **{port_label(int(tp.iloc[0]['dst_port']))}** — "
+                        f"**{int(tp.iloc[0]['count']):,}** connexions autorisées, service le plus sollicité.")
 
     # ── IPs hors plan interne ──────────────────────────────────────────────────
     ext_df = external_ip_accesses(df)
@@ -263,10 +400,10 @@ sollicitée, cela signifie qu'il y a beaucoup de trafic non prévu dans la confi
         st.plotly_chart(fig, use_container_width=True)
         top_rule = rule_total.iloc[0]
         is_cleanup = top_rule['policy_id'] == "999"
-        st.caption(
-            f"📌 La règle **{top_rule['policy_id']}** a été déclenchée {int(top_rule['total']):,} fois — "
-            + ("c'est la règle *catch-all* qui bloque tout trafic non explicitement autorisé." if is_cleanup
-               else "c'est la règle qui a traité le plus de trafic sur la période.")
+        st.markdown(
+            f"📌 Règle **{top_rule['policy_id']}** déclenchée **{int(top_rule['total']):,}** fois — "
+            + ("règle *catch-all* : bloque tout trafic non explicitement autorisé." if is_cleanup
+               else "règle la plus sollicitée sur la période.")
         )
 
     with col_r2:
@@ -288,81 +425,6 @@ peut indiquer qu'un certain type de trafic est fréquemment tenté mais interdit
                           plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
                           margin=dict(l=0, r=0, t=10, b=0))
         st.plotly_chart(fig, use_container_width=True)
-
-    # ── Priorités métier ────────────────────────────────────────────────────────
-    st.divider()
-    st.subheader("🧠 Priorités métier")
-
-    _api_key = os.getenv("MISTRAL_API_KEY", "")
-    if not _api_key:
-        st.info(
-            "💡 Configurer `MISTRAL_API_KEY` dans `.env` pour activer l'analyse des priorités.",
-            icon="🔑",
-        )
-    else:
-        col_btn, col_hint = st.columns([1, 4])
-        with col_btn:
-            run_prio = st.button("🧠 Analyser", type="primary", use_container_width=True)
-        with col_hint:
-            st.caption(
-                "Mistral analyse les données **actuellement filtrées** et identifie "
-                "les actions prioritaires pour votre équipe."
-            )
-
-        if run_prio or "priorities_result" in st.session_state:
-            if run_prio:
-                # Calcul des stats sur le df filtré courant
-                _deny_p   = compute_deny_ratio(df)
-                _top3_ips = top_src_ips(df, 3)["src_ip"].tolist()
-                _top3_pts = (
-                    df.groupby("dst_port").size()
-                    .sort_values(ascending=False).head(3).index.tolist()
-                )
-                _n_ext    = len(external_ip_accesses(df))
-                _h_totals = df.groupby(df["timestamp"].dt.hour).size()
-                _peak_h   = int(_h_totals.idxmax()) if not _h_totals.empty else 0
-                _top_rule = (
-                    df.groupby("policy_id").size()
-                    .sort_values(ascending=False).index[0]
-                    if not df.empty else "—"
-                )
-                _d_min = df["timestamp"].min().strftime("%d/%m/%Y")
-                _d_max = df["timestamp"].max().strftime("%d/%m/%Y")
-
-                _prompt = f"""Tu es un analyste SOC expérimenté. Voici les statistiques de logs firewall filtrés.
-
-PÉRIODE : {_d_min} → {_d_max} | {len(df):,} flux analysés
-MÉTRIQUES :
-- Taux de Deny : {_deny_p}%
-- Top 3 IPs sources actives : {_top3_ips}
-- Top 3 ports les plus ciblés : {[port_label(p) for p in _top3_pts]}
-- Flux depuis IPs externes : {_n_ext:,}
-- Heure de pic de trafic : {_peak_h}h
-- Règle firewall la plus sollicitée : {_top_rule}
-
-CONSIGNE STRICTE — réponds UNIQUEMENT avec 3 à 5 lignes au format exact :
-🔴 **[Critique]** action immédiate en 8 mots max — justification en 1 phrase
-🟡 **[Attention]** à surveiller en 8 mots max — justification en 1 phrase
-🟢 **[Info]** contexte utile en 8 mots max — justification en 1 phrase
-
-Aucune introduction. Aucune conclusion. Seulement les priorités numérotées."""
-
-                try:
-                    from mistralai import Mistral
-
-                    with st.spinner("Mistral analyse les priorités…"):
-                        client = Mistral(api_key=_api_key)
-                        resp = client.chat.complete(
-                            model="mistral-small-latest",
-                            messages=[{"role": "user", "content": _prompt}],
-                        )
-                        st.session_state["priorities_result"] = resp.choices[0].message.content
-                except Exception as e:
-                    st.error(f"Erreur Mistral : {e}")
-
-            if "priorities_result" in st.session_state:
-                st.markdown(st.session_state["priorities_result"])
-                st.caption("_Généré par Mistral AI · mistral-small-latest · données filtrées_")
 
 
 # =============================================================================
@@ -386,18 +448,26 @@ Un taux de Deny élevé sur UDP peut indiquer des scans réseau ou du trafic DNS
 """)
     proto_cross = (df.groupby(["proto", "action"], as_index=False)
                    .size().rename(columns={"size": "count"}))
+    _pt = proto_cross.groupby("proto")["count"].transform("sum")
+    proto_cross["pct"]   = (proto_cross["count"] / _pt * 100).round(1)
+    proto_cross["label"] = proto_cross["pct"].apply(lambda x: f"{x:.0f}%")
     fig = px.bar(proto_cross, x="proto", y="count", color="action", barmode="group",
+                 text="label",
                  color_discrete_map={"Permit": "#4ADE80", "Deny": "#F87171"},
-                 labels={"proto": "Protocole", "count": "Nombre de connexions", "action": "Décision"})
+                 labels={"proto": "Protocole", "count": "Connexions", "action": "Décision"})
+    fig.update_traces(
+        textfont_size=11, textposition="outside",
+        hovertemplate="<b>%{x}</b> · %{data.name}<br>Connexions : <b>%{y:,}</b><br>Part du protocole : <b>%{text}</b><extra></extra>",
+    )
     fig.update_layout(plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
-                      margin=dict(l=0, r=0, t=10, b=0))
+                      margin=dict(l=0, r=0, t=30, b=0), uniformtext_minsize=8)
     st.plotly_chart(fig, use_container_width=True)
     top_proto     = df.groupby("proto")["proto"].count().idxmax()
     deny_by_proto = df[df["action"] == "Deny"].groupby("proto").size()
-    st.caption(
-        f"📌 **{top_proto}** est le protocole dominant. "
-        f"Connexions bloquées — TCP : {deny_by_proto.get('TCP', 0):,} · "
-        f"UDP : {deny_by_proto.get('UDP', 0):,}."
+    st.markdown(
+        f"📌 **{top_proto}** est le protocole dominant — "
+        f"Deny TCP : **{deny_by_proto.get('TCP', 0):,}** · "
+        f"Deny UDP : **{deny_by_proto.get('UDP', 0):,}**."
     )
 
     st.divider()
@@ -421,9 +491,9 @@ non standard ou des scans aléatoires.
                      color="port_category", color_discrete_map=_COLORS, hole=0.4)
         fig.update_layout(margin=dict(l=0, r=0, t=10, b=0))
         st.plotly_chart(fig, use_container_width=True)
-        st.caption(
+        st.markdown(
             f"📌 Les ports **{dist.iloc[0]['port_category']}** représentent la majorité du trafic "
-            f"({int(dist.iloc[0]['count']):,} connexions)."
+            f"— **{int(dist.iloc[0]['count']):,}** connexions."
         )
         with st.expander("Récapitulatif des plages de ports"):
             st.markdown(
@@ -437,25 +507,40 @@ non standard ou des scans aléatoires.
         st.subheader("TOP 15 ports les plus ciblés")
         with st.expander("💡 Comment lire ce graphique ?"):
             st.markdown("""
-Ce graphique montre les 15 ports qui reçoivent le plus de connexions (toutes décisions confondues).
-La couleur indique la catégorie du port (🟣 Well-known, 🟡 Registered, 🟢 Dynamic/Private).
+Ce graphique montre les 15 ports qui reçoivent le plus de connexions, avec la répartition **Permit / Deny**.
+- 🟢 La partie verte = connexions **autorisées**
+- 🔴 La partie rouge = connexions **bloquées**
 
-Un port très ciblé avec beaucoup de *Deny* peut être la cible d'un scan automatisé
-(ex. le port 22/SSH est souvent scanné par des robots cherchant à se connecter par force brute).
+Un port avec beaucoup de rouge peut être la cible d'un scan automatisé
+(ex. le port 22/SSH est souvent scanné par des robots en force brute).
 """)
-        top_ports = (df_p.groupby(["dst_port", "port_category"], as_index=False)
-                     .size().rename(columns={"size": "count"})
-                     .sort_values("count", ascending=False).head(15))
+        _top15_ids = (
+            df_p.groupby("dst_port").size()
+            .sort_values(ascending=False).head(15).index.tolist()
+        )
+        top_ports = (
+            df_p[df_p["dst_port"].isin(_top15_ids)]
+            .groupby(["dst_port", "action"], as_index=False)
+            .size().rename(columns={"size": "count"})
+        )
         top_ports["port_lbl"] = top_ports["dst_port"].apply(port_label)
-        fig = px.bar(top_ports, x="port_lbl", y="count", color="port_category",
-                     labels={"port_lbl": "Port", "count": "Connexions", "port_category": "Catégorie"},
-                     color_discrete_map=_COLORS)
+        _port_order = (
+            top_ports.groupby("port_lbl")["count"].sum()
+            .sort_values(ascending=False).index.tolist()
+        )
+        fig = px.bar(top_ports, x="port_lbl", y="count", color="action", barmode="stack",
+                     category_orders={"port_lbl": _port_order},
+                     color_discrete_map={"Permit": "#4ADE80", "Deny": "#F87171"},
+                     labels={"port_lbl": "Port", "count": "Connexions", "action": "Décision"})
         fig.update_layout(xaxis_type="category",
                           plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
                           margin=dict(l=0, r=0, t=10, b=0))
         st.plotly_chart(fig, use_container_width=True)
-        st.caption(f"📌 **{port_label(int(top_ports.iloc[0]['dst_port']))}** est le plus ciblé "
-                   f"({int(top_ports.iloc[0]['count']):,} connexions).")
+        _top_totals = top_ports.groupby("port_lbl")["count"].sum()
+        st.markdown(
+            f"📌 **{_top_totals.idxmax()}** est le port le plus ciblé "
+            f"— **{int(_top_totals.max()):,}** connexions au total."
+        )
 
     # Croisement catégorie × action
     st.subheader("Catégorie de port × Décision du pare-feu")
@@ -467,11 +552,19 @@ autorisées (trafic légitime vers des services web) ou bloquées (tentatives d'
 """)
     cross = (df_p.groupby(["port_category", "action"], as_index=False)
              .size().rename(columns={"size": "count"}))
+    _ct = cross.groupby("port_category")["count"].transform("sum")
+    cross["pct"]   = (cross["count"] / _ct * 100).round(1)
+    cross["label"] = cross["pct"].apply(lambda x: f"{x:.0f}%")
     fig = px.bar(cross, x="port_category", y="count", color="action", barmode="group",
+                 text="label",
                  color_discrete_map={"Permit": "#4ADE80", "Deny": "#F87171"},
                  labels={"port_category": "Catégorie de port", "count": "Connexions", "action": "Décision"})
+    fig.update_traces(
+        textfont_size=11, textposition="outside",
+        hovertemplate="<b>%{x}</b> · %{data.name}<br>Connexions : <b>%{y:,}</b><br>Part de la catégorie : <b>%{text}</b><extra></extra>",
+    )
     fig.update_layout(plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
-                      margin=dict(l=0, r=0, t=10, b=0))
+                      margin=dict(l=0, r=0, t=30, b=0), uniformtext_minsize=8)
     st.plotly_chart(fig, use_container_width=True)
 
 
@@ -553,22 +646,41 @@ Chaque **point** représente une IP source différente. Sa position et son appar
         st.plotly_chart(fig, use_container_width=True)
 
         high_deny = filtered[filtered["deny_pct"] >= 50]
-        if not high_deny.empty:
-            st.warning(
-                f"⚠️ **{len(high_deny)} IP(s)** avec plus de 50% de connexions bloquées : "
-                + ", ".join(f"`{ip}`" for ip in high_deny.head(5)["src_ip"])
-                + (" …" if len(high_deny) > 5 else "")
-                + " — Comportement potentiellement malveillant."
+        scanners  = filtered[filtered["n_dst"] >= dst_threshold].sort_values("n_dst", ascending=False)
+
+        st.markdown("#### 🚨 Alertes détectées")
+        _a1, _a2 = st.columns(2)
+
+        with _a1:
+            st.markdown("**⚠️ Taux de blocage élevé**")
+            st.caption(
+                "Signal *pare-feu* : ces IPs sont bloquées sur ≥ 50 % de leurs connexions. "
+                "Le réseau les repousse → tentatives d'intrusion probables."
             )
-        if n_scanners > 0:
-            scanners = filtered[filtered["n_dst"] >= dst_threshold].sort_values(
-                "n_dst", ascending=False
+            if not high_deny.empty:
+                st.warning(
+                    f"**{len(high_deny)} IP(s)** bloquées à > 50 % : "
+                    + ", ".join(f"`{ip}`" for ip in high_deny.head(5)["src_ip"])
+                    + (" …" if len(high_deny) > 5 else "")
+                )
+            else:
+                st.success("Aucune IP avec un taux de blocage élevé.")
+
+        with _a2:
+            st.markdown("**🔍 Comportement de scan**")
+            st.caption(
+                f"Signal *comportemental* : ces IPs contactent ≥ {dst_threshold} destinations "
+                "distinctes, indépendamment de ce que le pare-feu décide. "
+                "Reconnaissance réseau ou balayage de ports possible."
             )
-            st.info(
-                f"🔍 **{n_scanners} IP(s)** au-delà du seuil scanning ({dst_threshold} destinations) : "
-                + ", ".join(f"`{ip}`" for ip in scanners.head(5)["src_ip"])
-                + (" …" if n_scanners > 5 else "")
-            )
+            if n_scanners > 0:
+                st.info(
+                    f"**{n_scanners} IP(s)** ont sondé ≥ {dst_threshold} destinations : "
+                    + ", ".join(f"`{ip}`" for ip in scanners.head(5)["src_ip"])
+                    + (" …" if n_scanners > 5 else "")
+                )
+            else:
+                st.success("Aucune IP au-delà du seuil de scan.")
 
         st.divider()
         st.subheader("Détail d'une IP source")

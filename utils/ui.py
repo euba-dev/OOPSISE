@@ -31,7 +31,15 @@ def render_sidebar(df: pd.DataFrame) -> pd.DataFrame:
         st.markdown(f"**Source** : {icon} `{label}`")
         st.divider()
 
-        st.subheader("Filtres")
+        _col_title, _col_reset = st.columns([3, 1])
+        with _col_title:
+            st.subheader("Filtres")
+        with _col_reset:
+            st.write("")
+            if st.button("↺", help="Réinitialiser tous les filtres", use_container_width=True):
+                for _k in ["_flt_date", "_flt_hour", "_flt_proto", "_flt_action", "_flt_ports"]:
+                    st.session_state.pop(_k, None)
+                st.rerun()
 
         # ── Filtres temporels ──────────────────────────────────────────────────
         ts = df["timestamp"]
@@ -45,6 +53,7 @@ def render_sidebar(df: pd.DataFrame) -> pd.DataFrame:
                 min_value=min_date,
                 max_value=max_date,
                 help="Sélectionnez une plage de dates pour restreindre l'analyse.",
+                key="_flt_date",
             )
             if isinstance(date_range, (list, tuple)) and len(date_range) == 2:
                 d_start, d_end = date_range
@@ -63,6 +72,7 @@ def render_sidebar(df: pd.DataFrame) -> pd.DataFrame:
                 "Filtrer les connexions selon l'heure de la journée (UTC). "
                 "Utile pour isoler le trafic nocturne ou les heures de pointe."
             ),
+            key="_flt_hour",
         )
         mask_hour = (ts.dt.hour >= h_start) & (ts.dt.hour <= h_end)
 
@@ -70,8 +80,8 @@ def render_sidebar(df: pd.DataFrame) -> pd.DataFrame:
         proto_opts  = sorted(df["proto"].unique().tolist())
         action_opts = sorted(df["action"].unique().tolist())
 
-        proto_sel  = st.multiselect("Protocole", proto_opts,  default=proto_opts)
-        action_sel = st.multiselect("Action",    action_opts, default=action_opts)
+        proto_sel  = st.multiselect("Protocole", proto_opts,  default=proto_opts,  key="_flt_proto")
+        action_sel = st.multiselect("Action",    action_opts, default=action_opts, key="_flt_action")
 
         # ── Filtre RFC 6056 (catégorie de port) ────────────────────────────────
         _PORT_CATS = {
@@ -87,6 +97,7 @@ def render_sidebar(df: pd.DataFrame) -> pd.DataFrame:
                 "Filtrer selon les plages de ports définies par la RFC 6056 : "
                 "Well-known (0–1023), Registered (1024–49151), Dynamic/Private (49152–65535)."
             ),
+            key="_flt_ports",
         )
         selected_cat_keys = [k for k, v in _PORT_CATS.items() if v in port_cat_sel]
         mask_port = df["dst_port"].apply(classify_port).isin(selected_cat_keys)
