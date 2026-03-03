@@ -1,6 +1,6 @@
 # OPSIE × SISE 2026 — Analyse de logs Firewall
 
-Application web interactive de visualisation et d'analyse de logs iptables, développée dans le cadre du **Challenge OPSIE × SISE 2026** — Master SISE, Université Lumière Lyon 2.
+Application web interactive de visualisation et d'analyse de logs iptables, développée dans le cadre du **Challenge OPSIE × SISE 2026** — Master SISE & OPSIE, Université Lumière Lyon 2.
 
 ---
 
