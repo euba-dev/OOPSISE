@@ -40,11 +40,12 @@ df_agg_shared = (
 )
 
 
-# ── Cache ML : invalider si la source change ──────────────────────────────────
-if st.session_state.get("_ml_src") != _src:
+# ── Cache ML : invalider si les données filtrées changent (source OU filtres) ─
+_ml_fp = f"{_src}|{len(df_agg_shared)}|{int(df_agg_shared['nombre_de_connexion'].sum())}"
+if st.session_state.get("_ml_fingerprint") != _ml_fp:
     st.session_state.pop("km_result", None)
     st.session_state.pop("if2_result", None)
-    st.session_state["_ml_src"] = _src
+    st.session_state["_ml_fingerprint"] = _ml_fp
 
 _MIN_IPS_ML = 5
 _has_enough_data = len(df_agg_shared) >= _MIN_IPS_ML
@@ -115,10 +116,11 @@ Une IP qui tente de nombreux ports ou IP différents est suspecte (scan réseau)
             key="km_kmax",
         )
         run_km = st.button("▶ Lancer K-Means", type="primary", use_container_width=True,
-                           key="run_km", disabled=not _has_enough_data)
+                           key="run_km",
+                           disabled=not _has_enough_data or "km_result" in st.session_state)
 
     with col_r:
-        if _has_enough_data and (run_km or "km_result" not in st.session_state):
+        if _has_enough_data and run_km:
             with st.spinner("Clustering K-Means en cours…"):
                 from sklearn.cluster import KMeans
                 from sklearn.manifold import TSNE
@@ -339,10 +341,10 @@ mais ont un comportement global suspect (ex. : 1 000 connexions vers 500 ports d
         )
         run_if2 = st.button("▶ Lancer Isolation Forest", type="primary",
                             use_container_width=True, key="run_if2",
-                            disabled=not _has_enough_data)
+                            disabled=not _has_enough_data or "if2_result" in st.session_state)
 
     with col_r2:
-        if _has_enough_data and (run_if2 or "if2_result" not in st.session_state):
+        if _has_enough_data and run_if2:
             with st.spinner("Isolation Forest agrégé en cours…"):
                 from sklearn.ensemble import IsolationForest
                 from sklearn.preprocessing import StandardScaler
