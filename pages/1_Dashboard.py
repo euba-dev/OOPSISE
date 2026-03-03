@@ -115,6 +115,7 @@ Aucune introduction. Aucune conclusion. Seulement les priorités."""
                         )
                         st.session_state["priorities_result"] = resp.choices[0].message.content
                         st.session_state["priorities_hash"]   = _cur_hash
+                    st.rerun()
                 except Exception as e:
                     st.error(f"Erreur Mistral : {e}")
 

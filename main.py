@@ -5,16 +5,12 @@ streamlit run main.py
 
 import streamlit as st
 
-from utils.data_loader import get_data
 from utils.ui import PAGE_CONFIG
 
 st.set_page_config(page_title="OPSIE x SISE 2026", **PAGE_CONFIG)
 
 
 def page_accueil():
-    _src = st.session_state.get("_data_source", "mock")
-    df = get_data(_src)
-
     st.title("🛡️ OPSIE x SISE — Analyse de logs Firewall")
     st.caption("Challenge 2026 · Master SISE · Université Lumière Lyon 2")
     st.divider()
@@ -71,31 +67,6 @@ Nous disposons donc des logs qui documentent qui a voulu se connecter, à quoi, 
         icon="🔍",
     )
 
-    st.divider()
-
-    st.subheader("📈 Aperçu des données actuellement chargées")
-
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Flux enregistrés",       f"{len(df):,}")
-    c2.metric("Période analysée",
-              f"{df['timestamp'].min().strftime('%d/%m %H:%M')} → "
-              f"{df['timestamp'].max().strftime('%d/%m %H:%M')}")
-    c3.metric("IP sources distinctes",  f"{df['src_ip'].nunique():,}")
-    c4.metric("Règles actives",         f"{df['policy_id'].nunique()}")
-
-    src = _src
-    src_labels = {
-        "mock":          ("🟡", "Données de démonstration",
-                          "Les logs affichés sont générés automatiquement pour simuler un trafic réseau réaliste. "
-                          "Ils ne correspondent pas à un réseau réel — c'est la source utilisée par défaut en l'absence de fichier de données réel."),
-        "parquet":       ("🟢", "Fichier Parquet (logs réels OPSIE)",
-                          "Les logs sont lus depuis le fichier Parquet contenant les données réelles du pare-feu OPSIE."),
-        "csv":           ("🟢", "Fichier CSV chargé",      "Les logs proviennent d'un fichier CSV local."),
-        "sql":           ("🟢", "Base de données SQL",     "Les logs sont lus depuis une base de données SQL."),
-        "elasticsearch": ("🟢", "Elasticsearch",           "Les logs sont indexés dans un cluster Elasticsearch."),
-    }
-    icon, label, desc = src_labels.get(src, ("⚪", src, ""))
-    st.info(f"{icon} **Source active : {label}**\n\n{desc}")
 
 
 pg = st.navigation([

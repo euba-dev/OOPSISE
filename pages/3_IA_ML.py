@@ -117,7 +117,7 @@ Une IP qui tente de nombreux ports ou IP différents est suspecte (scan réseau)
         )
         run_km = st.button("▶ Lancer K-Means", type="primary", use_container_width=True,
                            key="run_km",
-                           disabled=not _has_enough_data or "km_result" in st.session_state)
+                           disabled=not _has_enough_data)
 
     with col_r:
         if _has_enough_data and run_km:
@@ -330,71 +330,63 @@ mais ont un comportement global suspect (ex. : 1 000 connexions vers 500 ports d
             f"minimum {_MIN_IPS_ML} requis."
         )
 
-    col_p2, col_r2 = st.columns([1, 3])
+    contamination2 = 0.05
 
-    with col_p2:
-        contamination2 = st.slider(
-            "Proportion d'anomalies attendue",
-            0.01, 0.3, 0.05, step=0.01,
-            help="Part des IPs considérées comme anormales. 5 % = 1 IP sur 20.",
-            key="if2_contamination",
+    run_if2 = st.button("▶ Lancer Isolation Forest", type="primary",
+                        use_container_width=False, key="run_if2",
+                        disabled=not _has_enough_data)
+
+    if _has_enough_data and run_if2:
+        with st.spinner("Isolation Forest agrégé en cours…"):
+            from sklearn.ensemble import IsolationForest
+            from sklearn.preprocessing import StandardScaler
+
+            # — Agrégation partagée (calculée une fois en dehors des tabs) —
+            df_agg2 = df_agg_shared.copy()
+
+            X2 = StandardScaler().fit_transform(df_agg2[_AGG_FEATURE_COLS].values)
+
+            clf = IsolationForest(contamination=contamination2, random_state=42)
+            df_agg2["anomaly"] = clf.fit_predict(X2)          # -1 = anomalie, 1 = normal
+            df_agg2["score"]   = -clf.score_samples(X2)       # plus élevé = plus suspect
+            df_agg2["Statut"]  = df_agg2["anomaly"].map({1: "Normal", -1: "Suspect"})
+
+            st.session_state["if2_result"] = {"df_agg2": df_agg2}
+
+    if "if2_result" not in st.session_state:
+        st.info(
+            f"🔒 Minimum {_MIN_IPS_ML} IPs sources requis."
+            if not _has_enough_data
+            else "Cliquez sur **▶ Lancer Isolation Forest** pour démarrer l'analyse."
         )
-        run_if2 = st.button("▶ Lancer Isolation Forest", type="primary",
-                            use_container_width=True, key="run_if2",
-                            disabled=not _has_enough_data or "if2_result" in st.session_state)
+    else:
+        df_agg2  = st.session_state["if2_result"]["df_agg2"]
+        n_sus    = (df_agg2["Statut"] == "Suspect").sum()
+        n_total  = len(df_agg2)
 
-    with col_r2:
-        if _has_enough_data and run_if2:
-            with st.spinner("Isolation Forest agrégé en cours…"):
-                from sklearn.ensemble import IsolationForest
-                from sklearn.preprocessing import StandardScaler
+        st.info(f"**{n_sus} IPs suspectes** détectées sur {n_total} IPs sources analysées.")
 
-                # — Agrégation partagée (calculée une fois en dehors des tabs) —
-                df_agg2 = df_agg_shared.copy()
+        # — Tableau agrégé + scores —
+        st.subheader("Données agrégées — scores d'anomalie")
+        st.dataframe(
+            df_agg2[["src_ip", "nombre_de_connexion", "nb_ip_dst_uniques",
+                     "nb_port_dst_uniques", "score", "Statut"]]
+            .rename(columns={
+                "src_ip":               "IP source",
+                "nombre_de_connexion":  "Connexions",
+                "nb_ip_dst_uniques":    "IP dst uniques",
+                "nb_port_dst_uniques":  "Ports dst uniques",
+                "score":                "Score anomalie",
+            })
+            .sort_values("Score anomalie", ascending=False),
+            use_container_width=True,
+            height=300,
+        )
 
-                X2 = StandardScaler().fit_transform(df_agg2[_AGG_FEATURE_COLS].values)
-
-                clf = IsolationForest(contamination=contamination2, random_state=42)
-                df_agg2["anomaly"] = clf.fit_predict(X2)          # -1 = anomalie, 1 = normal
-                df_agg2["score"]   = -clf.score_samples(X2)       # plus élevé = plus suspect
-                df_agg2["Statut"]  = df_agg2["anomaly"].map({1: "Normal", -1: "Suspect"})
-
-                st.session_state["if2_result"] = {"df_agg2": df_agg2}
-
-        if "if2_result" not in st.session_state:
-            st.info(
-                f"🔒 Minimum {_MIN_IPS_ML} IPs sources requis."
-                if not _has_enough_data
-                else "Cliquez sur **▶ Lancer Isolation Forest** pour démarrer l'analyse."
-            )
-        else:
-            df_agg2  = st.session_state["if2_result"]["df_agg2"]
-            n_sus    = (df_agg2["Statut"] == "Suspect").sum()
-            n_total  = len(df_agg2)
-
-            st.info(f"**{n_sus} IPs suspectes** détectées sur {n_total} IPs sources analysées.")
-
-            # — Tableau agrégé + scores —
-            st.subheader("Données agrégées — scores d'anomalie")
-            st.dataframe(
-                df_agg2[["src_ip", "nombre_de_connexion", "nb_ip_dst_uniques",
-                         "nb_port_dst_uniques", "score", "Statut"]]
-                .rename(columns={
-                    "src_ip":               "IP source",
-                    "nombre_de_connexion":  "Connexions",
-                    "nb_ip_dst_uniques":    "IP dst uniques",
-                    "nb_port_dst_uniques":  "Ports dst uniques",
-                    "score":                "Score anomalie",
-                })
-                .sort_values("Score anomalie", ascending=False),
-                use_container_width=True,
-                height=300,
-            )
-
-            # — Scatter : IP dst vs ports dst, coloré par score d'anomalie —
-            st.subheader("Visualisation des anomalies — IP destinations vs ports ciblés")
-            with st.expander("💡 Comment lire ce graphique ?"):
-                st.markdown("""
+        # — Scatter : IP dst vs ports dst, coloré par score d'anomalie —
+        st.subheader("Visualisation des anomalies — IP destinations vs ports ciblés")
+        with st.expander("💡 Comment lire ce graphique ?"):
+            st.markdown("""
 - Chaque **point** = une IP source.
 - L'**axe X** = nombre d'IP de destination distinctes contactées.
 - L'**axe Y** = nombre de ports de destination distincts ciblés.
@@ -402,44 +394,44 @@ mais ont un comportement global suspect (ex. : 1 000 connexions vers 500 ports d
 - Une IP en haut à droite (beaucoup d'IP **et** beaucoup de ports) est un signal fort de scan réseau.
 - Survolez un point pour voir l'adresse IP et son score exact.
 """)
-            fig_if2 = px.scatter(
-                df_agg2,
-                x="nb_ip_dst_uniques",
-                y="nb_port_dst_uniques",
-                color="score",
-                hover_data=["src_ip", "nombre_de_connexion", "Statut"],
-                labels={
-                    "nb_ip_dst_uniques":   "IP destinations uniques",
-                    "nb_port_dst_uniques": "Ports destinations uniques",
-                    "score":               "Score anomalie",
-                },
-                color_continuous_scale="Reds",
-                opacity=0.85,
-                title="Isolation Forest agrégé — score d'anomalie par IP source",
-            )
-            fig_if2.update_layout(
-                plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
-                margin=dict(l=0, r=0, t=40, b=0),
-            )
-            st.plotly_chart(fig_if2, use_container_width=True)
+        fig_if2 = px.scatter(
+            df_agg2,
+            x="nb_ip_dst_uniques",
+            y="nb_port_dst_uniques",
+            color="score",
+            hover_data=["src_ip", "nombre_de_connexion", "Statut"],
+            labels={
+                "nb_ip_dst_uniques":   "IP destinations uniques",
+                "nb_port_dst_uniques": "Ports destinations uniques",
+                "score":               "Score anomalie",
+            },
+            color_continuous_scale="Reds",
+            opacity=0.85,
+            title="Isolation Forest agrégé — score d'anomalie par IP source",
+        )
+        fig_if2.update_layout(
+            plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+            margin=dict(l=0, r=0, t=40, b=0),
+        )
+        st.plotly_chart(fig_if2, use_container_width=True)
 
-            # — Top IPs suspectes —
-            st.subheader("Top IPs suspectes")
-            suspects = (
-                df_agg2[df_agg2["Statut"] == "Suspect"]
-                .sort_values("score", ascending=False)
-                [["src_ip", "nombre_de_connexion", "nb_ip_dst_uniques",
-                  "nb_port_dst_uniques", "score"]]
-                .rename(columns={
-                    "src_ip":               "IP source",
-                    "nombre_de_connexion":  "Connexions",
-                    "nb_ip_dst_uniques":    "IP dst uniques",
-                    "nb_port_dst_uniques":  "Ports dst uniques",
-                    "score":                "Score anomalie",
-                })
-                .round({"Score anomalie": 4})
-            )
-            st.dataframe(suspects, use_container_width=True)
+        # — Top IPs suspectes —
+        st.subheader("Top IPs suspectes")
+        suspects = (
+            df_agg2[df_agg2["Statut"] == "Suspect"]
+            .sort_values("score", ascending=False)
+            [["src_ip", "nombre_de_connexion", "nb_ip_dst_uniques",
+              "nb_port_dst_uniques", "score"]]
+            .rename(columns={
+                "src_ip":               "IP source",
+                "nombre_de_connexion":  "Connexions",
+                "nb_ip_dst_uniques":    "IP dst uniques",
+                "nb_port_dst_uniques":  "Ports dst uniques",
+                "score":                "Score anomalie",
+            })
+            .round({"Score anomalie": 4})
+        )
+        st.dataframe(suspects, use_container_width=True)
 
 
 # =============================================================================
