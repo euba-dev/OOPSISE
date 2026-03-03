@@ -1,11 +1,11 @@
-streamlit>=1.36.0
+streamlit==1.54.0
 pandas==2.2.1
 plotly==5.20.0
-scikit-learn==1.4.1.post1
-mistralai>=1.0.0
+scikit-learn==1.8.0
+mistralai==1.12.4
 elasticsearch==8.12.1
 sqlalchemy==2.0.28
 numpy==1.26.4
 python-dotenv==1.0.1
-prince>=0.7.1
-openTSNE>=1.0.0
+prince==0.16.6
+openTSNE==1.0.4
