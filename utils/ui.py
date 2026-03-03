@@ -1,18 +1,17 @@
 """Composants UI partagés entre toutes les pages."""
 
+from pathlib import Path
+
 import pandas as pd
 import streamlit as st
 
-from utils.data_loader import current_source
 from utils.helpers import classify_port
 
-_SOURCE_LABELS = {
-    "mock":          ("🟡", "Données fictives"),
-    "parquet":       ("🟢", "Parquet"),
-    "csv":           ("🟢", "CSV"),
-    "sql":           ("🟢", "SQL"),
-    "elasticsearch": ("🟢", "Elasticsearch"),
-}
+# Sources exposées dans l'UI (clé = valeur DATA_SOURCE, valeur = label affiché)
+_UI_SOURCES: dict[str, str] = {"mock": "🟡 Données fictives"}
+_DB_PATH = Path(__file__).parent.parent / "data" / "logs.db"
+if _DB_PATH.exists():
+    _UI_SOURCES["sql"] = "🟢 Données extraites"
 
 PAGE_CONFIG = dict(
     page_icon="🛡️",
@@ -21,14 +20,32 @@ PAGE_CONFIG = dict(
 )
 
 
+def _on_source_change() -> None:
+    """Callback déclenché quand l'utilisateur change de source : vide les filtres."""
+    for _k in ["_flt_date", "_flt_hour", "_flt_proto", "_flt_action", "_flt_ports"]:
+        st.session_state.pop(_k, None)
+
+
 def render_sidebar(df: pd.DataFrame) -> pd.DataFrame:
-    """Affiche le header + filtres temporels + filtres métier, retourne le DataFrame filtré."""
+    """Affiche le header + sélecteur de source + filtres, retourne le DataFrame filtré."""
     with st.sidebar:
         st.title("🛡️ OPSIE x SISE")
         st.caption("Visualisation et analyse de données de sécurité")
 
-        icon, label = _SOURCE_LABELS.get(current_source(), ("⚪", current_source()))
-        st.markdown(f"**Source** : {icon} `{label}`")
+        # ── Sélecteur de source ────────────────────────────────────────────────
+        _src_keys = list(_UI_SOURCES.keys())
+        _cur_idx  = _src_keys.index(
+            st.session_state.get("_data_source", _src_keys[0])
+        ) if st.session_state.get("_data_source", _src_keys[0]) in _src_keys else 0
+
+        st.selectbox(
+            "Source de données",
+            options=_src_keys,
+            format_func=lambda k: _UI_SOURCES[k],
+            index=_cur_idx,
+            key="_data_source",
+            on_change=_on_source_change,
+        )
         st.divider()
 
         _col_title, _col_reset = st.columns([3, 1])

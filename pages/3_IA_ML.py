@@ -15,7 +15,8 @@ from utils.data_loader import get_data
 from utils.helpers import compute_deny_ratio, external_ip_accesses, top_src_ips
 from utils.ui import render_sidebar
 
-df = render_sidebar(get_data())
+_src = st.session_state.get("_data_source", "mock")
+df = render_sidebar(get_data(_src))
 
 st.header("🤖 IA & ML — Analyse avancée")
 
@@ -38,6 +39,15 @@ df_agg_shared = (
     .reset_index()
 )
 
+
+# ── Cache ML : invalider si la source change ──────────────────────────────────
+if st.session_state.get("_ml_src") != _src:
+    st.session_state.pop("km_result", None)
+    st.session_state.pop("if2_result", None)
+    st.session_state["_ml_src"] = _src
+
+_MIN_IPS_ML = 5
+_has_enough_data = len(df_agg_shared) >= _MIN_IPS_ML
 
 # =============================================================================
 # TAB — DONNÉES AGRÉGÉES
@@ -89,6 +99,12 @@ Une IP qui tente de nombreux ports ou IP différents est suspecte (scan réseau)
 4. Visualisation → t-SNE 3D interactif avec axes annotés
 """)
 
+    if not _has_enough_data:
+        st.warning(
+            f"⚠️ Pas assez d'IPs sources ({len(df_agg_shared)}) pour le K-Means — "
+            f"minimum {_MIN_IPS_ML} requis."
+        )
+
     col_p, col_r = st.columns([1, 3])
 
     with col_p:
@@ -98,10 +114,11 @@ Une IP qui tente de nombreux ports ou IP différents est suspecte (scan réseau)
             help="L'algorithme testera toutes les valeurs de k de 2 jusqu'à ce maximum pour trouver le coude.",
             key="km_kmax",
         )
-        run_km = st.button("▶ Lancer K-Means", type="primary", use_container_width=True, key="run_km")
+        run_km = st.button("▶ Lancer K-Means", type="primary", use_container_width=True,
+                           key="run_km", disabled=not _has_enough_data)
 
     with col_r:
-        if run_km or "km_result" not in st.session_state:
+        if _has_enough_data and (run_km or "km_result" not in st.session_state):
             with st.spinner("Clustering K-Means en cours…"):
                 from sklearn.cluster import KMeans
                 from sklearn.manifold import TSNE
@@ -171,57 +188,65 @@ Une IP qui tente de nombreux ports ou IP différents est suspecte (scan réseau)
                     "feature_cols": feature_cols,
                 }
 
-        res          = st.session_state["km_result"]
-        df_agg       = res["df_agg"]
-        k_opt        = res["k_opt"]
-        axis_labels  = res["axis_labels"]
-        feature_cols = res["feature_cols"]
+        if "km_result" not in st.session_state:
+            st.info(
+                f"🔒 Minimum {_MIN_IPS_ML} IPs sources requis."
+                if not _has_enough_data
+                else "Configurez les paramètres et cliquez sur **▶ Lancer K-Means**."
+            )
+        else:
+            res          = st.session_state["km_result"]
+            df_agg       = res["df_agg"]
+            k_opt        = res["k_opt"]
+            axis_labels  = res["axis_labels"]
+            feature_cols = res["feature_cols"]
 
-        st.info(f"🎯 Coude détecté automatiquement : **k = {k_opt}** clusters.")
+            st.info(f"🎯 Coude détecté automatiquement : **k = {k_opt}** clusters.")
 
-        # — Tableau agrégé + cluster (données brutes disponibles dans l'onglet "Données agrégées") —
-        st.subheader("Données agrégées — résultat du clustering")
-        st.dataframe(
-            df_agg[["src_ip", "nombre_de_connexion", "nb_ip_dst_uniques", "nb_port_dst_uniques", "Cluster"]]
-            .rename(columns={
-                "src_ip":               "IP source",
-                "nombre_de_connexion":  "Connexions",
-                "nb_ip_dst_uniques":    "IP dst uniques",
-                "nb_port_dst_uniques":  "Ports dst uniques",
-            })
-            .sort_values("Connexions", ascending=False),
-            use_container_width=True,
-            height=300,
-        )
+            # — Tableau agrégé + cluster —
+            st.subheader("Données agrégées — résultat du clustering")
+            st.dataframe(
+                df_agg[["src_ip", "nombre_de_connexion", "nb_ip_dst_uniques",
+                        "nb_port_dst_uniques", "Cluster"]]
+                .rename(columns={
+                    "src_ip":               "IP source",
+                    "nombre_de_connexion":  "Connexions",
+                    "nb_ip_dst_uniques":    "IP dst uniques",
+                    "nb_port_dst_uniques":  "Ports dst uniques",
+                })
+                .sort_values("Connexions", ascending=False),
+                use_container_width=True,
+                height=300,
+            )
 
-        # — Graphique du coude —
-        with st.expander("💡 Comment lire le graphique du coude ?"):
-            st.markdown("""
+            # — Graphique du coude —
+            with st.expander("💡 Comment lire le graphique du coude ?"):
+                st.markdown("""
 - L'**axe horizontal** = nombre de clusters testés.
 - L'**axe vertical** = inertie : dispersion interne des groupes. Plus c'est bas, mieux les groupes sont définis.
 - La **ligne pointillée rouge** marque le coude détecté automatiquement — meilleur compromis entre précision et simplicité.
 """)
-        fig_elbow = px.line(
-            x=res["ks"], y=res["inertias"],
-            markers=True,
-            labels={"x": "Nombre de clusters (k)", "y": "Inertie"},
-            title="Méthode du coude — choix automatique de k",
-        )
-        fig_elbow.add_vline(
-            x=k_opt, line_dash="dash", line_color="#EF4444",
-            annotation_text=f"k optimal = {k_opt}",
-            annotation_font_color="#EF4444",
-        )
-        fig_elbow.update_layout(
-            plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
-            margin=dict(l=0, r=0, t=40, b=0),
-        )
-        st.plotly_chart(fig_elbow, use_container_width=True)
+            fig_elbow = px.line(
+                x=res["ks"], y=res["inertias"],
+                markers=True,
+                labels={"x": "Nombre de clusters (k)", "y": "Inertie"},
+                title="Méthode du coude — choix automatique de k",
+            )
+            fig_elbow.add_vline(
+                x=k_opt, line_dash="dash", line_color="#EF4444",
+                annotation_text=f"k optimal = {k_opt}",
+                annotation_font_color="#EF4444",
+            )
+            fig_elbow.update_layout(
+                plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                margin=dict(l=0, r=0, t=40, b=0),
+            )
+            st.plotly_chart(fig_elbow, use_container_width=True)
 
-        # — t-SNE 3D annoté —
-        st.subheader("Projection t-SNE 3D — séparation globale des clusters")
-        with st.expander("💡 Comment lire ce graphique ?"):
-            st.markdown("""
+            # — t-SNE 3D annoté —
+            st.subheader("Projection t-SNE 3D — séparation globale des clusters")
+            with st.expander("💡 Comment lire ce graphique ?"):
+                st.markdown("""
 **t-SNE** projette les IPs dans un espace 3D en préservant les similarités locales.
 - Chaque **point** = une IP source.
 - Chaque **couleur** = un cluster.
@@ -229,49 +254,50 @@ Une IP qui tente de nombreux ports ou IP différents est suspecte (scan réseau)
 - Des groupes bien séparés = clusters cohérents et distincts.
 - Utilisez la souris pour **faire tourner** le graphique et explorer les clusters sous différents angles.
 """)
-        ax1, ax2, ax3 = axis_labels
-        fig_tsne = px.scatter_3d(
-            df_agg,
-            x="tsne_x", y="tsne_y", z="tsne_z",
-            color="Cluster",
-            hover_data=["src_ip", "nombre_de_connexion", "nb_ip_dst_uniques", "nb_port_dst_uniques"],
-            labels={"tsne_x": ax1, "tsne_y": ax2, "tsne_z": ax3},
-            opacity=0.8,
-            title=f"t-SNE 3D — {k_opt} clusters d'IPs sources",
-            color_discrete_sequence=px.colors.qualitative.Set1,
-        )
-        fig_tsne.update_traces(marker=dict(size=5))
-        fig_tsne.update_layout(
-            margin=dict(l=0, r=0, b=0, t=40),
-            scene=dict(
-                xaxis=dict(title=ax1),
-                yaxis=dict(title=ax2),
-                zaxis=dict(title=ax3),
-            ),
-            scene_camera=dict(eye=dict(x=1.2, y=1.2, z=0.6)),
-        )
-        st.plotly_chart(fig_tsne, use_container_width=True)
+            ax1, ax2, ax3 = axis_labels
+            fig_tsne = px.scatter_3d(
+                df_agg,
+                x="tsne_x", y="tsne_y", z="tsne_z",
+                color="Cluster",
+                hover_data=["src_ip", "nombre_de_connexion",
+                            "nb_ip_dst_uniques", "nb_port_dst_uniques"],
+                labels={"tsne_x": ax1, "tsne_y": ax2, "tsne_z": ax3},
+                opacity=0.8,
+                title=f"t-SNE 3D — {k_opt} clusters d'IPs sources",
+                color_discrete_sequence=px.colors.qualitative.Set1,
+            )
+            fig_tsne.update_traces(marker=dict(size=5))
+            fig_tsne.update_layout(
+                margin=dict(l=0, r=0, b=0, t=40),
+                scene=dict(
+                    xaxis=dict(title=ax1),
+                    yaxis=dict(title=ax2),
+                    zaxis=dict(title=ax3),
+                ),
+                scene_camera=dict(eye=dict(x=1.2, y=1.2, z=0.6)),
+            )
+            st.plotly_chart(fig_tsne, use_container_width=True)
 
-        # — Profil des clusters —
-        st.subheader("Profil des clusters")
-        with st.expander("💡 Comment lire ce tableau ?"):
-            st.markdown("""
+            # — Profil des clusters —
+            st.subheader("Profil des clusters")
+            with st.expander("💡 Comment lire ce tableau ?"):
+                st.markdown("""
 - **Nb_IPs** : nombre d'adresses IP dans ce cluster.
 - **Connexions_moy** : nombre moyen de connexions par IP.
 - **IP_dst_moy** : nombre moyen d'IP de destination distinctes contactées.
 - **Ports_dst_moy** : nombre moyen de ports de destination distincts ciblés — élevé = potentiel scan réseau.
 """)
-        profile = (
-            df_agg.groupby("Cluster")
-            .agg(
-                Nb_IPs=("src_ip", "count"),
-                Connexions_moy=("nombre_de_connexion", "mean"),
-                IP_dst_moy=("nb_ip_dst_uniques", "mean"),
-                Ports_dst_moy=("nb_port_dst_uniques", "mean"),
+            profile = (
+                df_agg.groupby("Cluster")
+                .agg(
+                    Nb_IPs=("src_ip", "count"),
+                    Connexions_moy=("nombre_de_connexion", "mean"),
+                    IP_dst_moy=("nb_ip_dst_uniques", "mean"),
+                    Ports_dst_moy=("nb_port_dst_uniques", "mean"),
+                )
+                .round(1)
             )
-            .round(1)
-        )
-        st.dataframe(profile, use_container_width=True)
+            st.dataframe(profile, use_container_width=True)
 
 
 # =============================================================================
@@ -296,6 +322,12 @@ mais ont un comportement global suspect (ex. : 1 000 connexions vers 500 ports d
 4. Les IPs avec un score élevé sont signalées comme **suspectes**
 """)
 
+    if not _has_enough_data:
+        st.warning(
+            f"⚠️ Pas assez d'IPs sources ({len(df_agg_shared)}) pour Isolation Forest — "
+            f"minimum {_MIN_IPS_ML} requis."
+        )
+
     col_p2, col_r2 = st.columns([1, 3])
 
     with col_p2:
@@ -306,10 +338,11 @@ mais ont un comportement global suspect (ex. : 1 000 connexions vers 500 ports d
             key="if2_contamination",
         )
         run_if2 = st.button("▶ Lancer Isolation Forest", type="primary",
-                            use_container_width=True, key="run_if2")
+                            use_container_width=True, key="run_if2",
+                            disabled=not _has_enough_data)
 
     with col_r2:
-        if run_if2 or "if2_result" not in st.session_state:
+        if _has_enough_data and (run_if2 or "if2_result" not in st.session_state):
             with st.spinner("Isolation Forest agrégé en cours…"):
                 from sklearn.ensemble import IsolationForest
                 from sklearn.preprocessing import StandardScaler
@@ -326,33 +359,40 @@ mais ont un comportement global suspect (ex. : 1 000 connexions vers 500 ports d
 
                 st.session_state["if2_result"] = {"df_agg2": df_agg2}
 
-        df_agg2  = st.session_state["if2_result"]["df_agg2"]
-        n_sus    = (df_agg2["Statut"] == "Suspect").sum()
-        n_total  = len(df_agg2)
+        if "if2_result" not in st.session_state:
+            st.info(
+                f"🔒 Minimum {_MIN_IPS_ML} IPs sources requis."
+                if not _has_enough_data
+                else "Cliquez sur **▶ Lancer Isolation Forest** pour démarrer l'analyse."
+            )
+        else:
+            df_agg2  = st.session_state["if2_result"]["df_agg2"]
+            n_sus    = (df_agg2["Statut"] == "Suspect").sum()
+            n_total  = len(df_agg2)
 
-        st.info(f"**{n_sus} IPs suspectes** détectées sur {n_total} IPs sources analysées.")
+            st.info(f"**{n_sus} IPs suspectes** détectées sur {n_total} IPs sources analysées.")
 
-        # — Tableau agrégé + scores (données brutes disponibles dans l'onglet "Données agrégées") —
-        st.subheader("Données agrégées — scores d'anomalie")
-        st.dataframe(
-            df_agg2[["src_ip", "nombre_de_connexion", "nb_ip_dst_uniques",
-                     "nb_port_dst_uniques", "score", "Statut"]]
-            .rename(columns={
-                "src_ip":               "IP source",
-                "nombre_de_connexion":  "Connexions",
-                "nb_ip_dst_uniques":    "IP dst uniques",
-                "nb_port_dst_uniques":  "Ports dst uniques",
-                "score":                "Score anomalie",
-            })
-            .sort_values("Score anomalie", ascending=False),
-            use_container_width=True,
-            height=300,
-        )
+            # — Tableau agrégé + scores —
+            st.subheader("Données agrégées — scores d'anomalie")
+            st.dataframe(
+                df_agg2[["src_ip", "nombre_de_connexion", "nb_ip_dst_uniques",
+                         "nb_port_dst_uniques", "score", "Statut"]]
+                .rename(columns={
+                    "src_ip":               "IP source",
+                    "nombre_de_connexion":  "Connexions",
+                    "nb_ip_dst_uniques":    "IP dst uniques",
+                    "nb_port_dst_uniques":  "Ports dst uniques",
+                    "score":                "Score anomalie",
+                })
+                .sort_values("Score anomalie", ascending=False),
+                use_container_width=True,
+                height=300,
+            )
 
-        # — Scatter : IP dst vs ports dst, coloré par score d'anomalie —
-        st.subheader("Visualisation des anomalies — IP destinations vs ports ciblés")
-        with st.expander("💡 Comment lire ce graphique ?"):
-            st.markdown("""
+            # — Scatter : IP dst vs ports dst, coloré par score d'anomalie —
+            st.subheader("Visualisation des anomalies — IP destinations vs ports ciblés")
+            with st.expander("💡 Comment lire ce graphique ?"):
+                st.markdown("""
 - Chaque **point** = une IP source.
 - L'**axe X** = nombre d'IP de destination distinctes contactées.
 - L'**axe Y** = nombre de ports de destination distincts ciblés.
@@ -360,43 +400,44 @@ mais ont un comportement global suspect (ex. : 1 000 connexions vers 500 ports d
 - Une IP en haut à droite (beaucoup d'IP **et** beaucoup de ports) est un signal fort de scan réseau.
 - Survolez un point pour voir l'adresse IP et son score exact.
 """)
-        fig_if2 = px.scatter(
-            df_agg2,
-            x="nb_ip_dst_uniques",
-            y="nb_port_dst_uniques",
-            color="score",
-            hover_data=["src_ip", "nombre_de_connexion", "Statut"],
-            labels={
-                "nb_ip_dst_uniques":   "IP destinations uniques",
-                "nb_port_dst_uniques": "Ports destinations uniques",
-                "score":               "Score anomalie",
-            },
-            color_continuous_scale="Reds",
-            opacity=0.85,
-            title="Isolation Forest agrégé — score d'anomalie par IP source",
-        )
-        fig_if2.update_layout(
-            plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
-            margin=dict(l=0, r=0, t=40, b=0),
-        )
-        st.plotly_chart(fig_if2, use_container_width=True)
+            fig_if2 = px.scatter(
+                df_agg2,
+                x="nb_ip_dst_uniques",
+                y="nb_port_dst_uniques",
+                color="score",
+                hover_data=["src_ip", "nombre_de_connexion", "Statut"],
+                labels={
+                    "nb_ip_dst_uniques":   "IP destinations uniques",
+                    "nb_port_dst_uniques": "Ports destinations uniques",
+                    "score":               "Score anomalie",
+                },
+                color_continuous_scale="Reds",
+                opacity=0.85,
+                title="Isolation Forest agrégé — score d'anomalie par IP source",
+            )
+            fig_if2.update_layout(
+                plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                margin=dict(l=0, r=0, t=40, b=0),
+            )
+            st.plotly_chart(fig_if2, use_container_width=True)
 
-        # — Top IPs suspectes —
-        st.subheader("Top IPs suspectes")
-        suspects = (
-            df_agg2[df_agg2["Statut"] == "Suspect"]
-            .sort_values("score", ascending=False)
-            [["src_ip", "nombre_de_connexion", "nb_ip_dst_uniques", "nb_port_dst_uniques", "score"]]
-            .rename(columns={
-                "src_ip":               "IP source",
-                "nombre_de_connexion":  "Connexions",
-                "nb_ip_dst_uniques":    "IP dst uniques",
-                "nb_port_dst_uniques":  "Ports dst uniques",
-                "score":                "Score anomalie",
-            })
-            .round({"Score anomalie": 4})
-        )
-        st.dataframe(suspects, use_container_width=True)
+            # — Top IPs suspectes —
+            st.subheader("Top IPs suspectes")
+            suspects = (
+                df_agg2[df_agg2["Statut"] == "Suspect"]
+                .sort_values("score", ascending=False)
+                [["src_ip", "nombre_de_connexion", "nb_ip_dst_uniques",
+                  "nb_port_dst_uniques", "score"]]
+                .rename(columns={
+                    "src_ip":               "IP source",
+                    "nombre_de_connexion":  "Connexions",
+                    "nb_ip_dst_uniques":    "IP dst uniques",
+                    "nb_port_dst_uniques":  "Ports dst uniques",
+                    "score":                "Score anomalie",
+                })
+                .round({"Score anomalie": 4})
+            )
+            st.dataframe(suspects, use_container_width=True)
 
 
 # =============================================================================
@@ -463,14 +504,13 @@ Structure ta réponse en markdown :
 ## 3. Recommandations prioritaires"""
 
         try:
-            from mistralai.client import MistralClient
-            from mistralai.models.chat_completion import ChatMessage
+            from mistralai import Mistral
 
             with st.spinner("Analyse Mistral en cours…"):
-                client   = MistralClient(api_key=api_key)
-                response = client.chat(
+                client = Mistral(api_key=api_key)
+                response = client.chat.complete(
                     model=model_choice,
-                    messages=[ChatMessage(role="user", content=prompt)],
+                    messages=[{"role": "user", "content": prompt}],
                 )
                 result = response.choices[0].message.content
 

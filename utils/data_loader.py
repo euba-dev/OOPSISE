@@ -137,16 +137,16 @@ _LOADERS = {
 # ---------------------------------------------------------------------------
 
 @st.cache_data(show_spinner="Chargement des données…", ttl=300)
-def get_data() -> pd.DataFrame:
+def get_data(source: str = "") -> pd.DataFrame:
     """
-    Charge les données depuis la source définie par DATA_SOURCE.
-    Résultat mis en cache 5 min (ttl=300).
-    Appelé par toutes les pages — ne pas modifier la logique de connexion ici.
+    Charge les données depuis la source indiquée (ou DATA_SOURCE si vide).
+    Mis en cache 5 min par source — changer de source crée une entrée de cache distincte.
     """
-    source = os.getenv("DATA_SOURCE", "mock").lower()
+    if not source:
+        source = os.getenv("DATA_SOURCE", "mock").lower()
     if source not in _LOADERS:
         raise ValueError(
-            f"DATA_SOURCE='{source}' invalide. Valeurs acceptées : {list(_LOADERS)}"
+            f"Source '{source}' invalide. Valeurs acceptées : {list(_LOADERS)}"
         )
     return _LOADERS[source]()
 

@@ -18,7 +18,8 @@ from utils.helpers import (
 )
 from utils.ui import render_sidebar
 
-df = render_sidebar(get_data())
+_src = st.session_state.get("_data_source", "mock")
+df = render_sidebar(get_data(_src))
 
 st.header("📊 Dashboard")
 
@@ -77,8 +78,8 @@ else:
                     .sort_values(ascending=False).index[0]
                     if not df.empty else "—"
                 )
-                _d_min = df["timestamp"].min().strftime("%d/%m/%Y")
-                _d_max = df["timestamp"].max().strftime("%d/%m/%Y")
+                _d_min = df["timestamp"].min().strftime("%d/%m/%Y") if not df.empty else "—"
+                _d_max = df["timestamp"].max().strftime("%d/%m/%Y") if not df.empty else "—"
 
                 _prompt = f"""Tu es un analyste SOC expérimenté. Voici les statistiques de logs firewall filtrés.
 

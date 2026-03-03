@@ -6,7 +6,8 @@ from utils.ui import render_sidebar
 _MAX_ROWS_DEFAULT = 500
 _MAX_ROWS_OPTIONS = [200, 500, 1_000, 5_000]
 
-df = render_sidebar(get_data())
+_src = st.session_state.get("_data_source", "mock")
+df = render_sidebar(get_data(_src))
 
 st.header("📋 Table de données brutes")
 

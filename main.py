@@ -5,14 +5,15 @@ streamlit run main.py
 
 import streamlit as st
 
-from utils.data_loader import current_source, get_data
+from utils.data_loader import get_data
 from utils.ui import PAGE_CONFIG
 
 st.set_page_config(page_title="OPSIE x SISE 2026", **PAGE_CONFIG)
 
 
 def page_accueil():
-    df = get_data()
+    _src = st.session_state.get("_data_source", "mock")
+    df = get_data(_src)
 
     st.title("🛡️ OPSIE x SISE — Analyse de logs Firewall")
     st.caption("Challenge 2026 · Master SISE · Université Lumière Lyon 2")
@@ -21,7 +22,7 @@ def page_accueil():
     st.markdown("""
 ### À quoi sert cette application ?
 
-Dans le cadre du **Challenge OPSIE x SISE **, cette application permet d'explorer et d'analyser
+Dans le cadre du **Challenge OPSIE x SISE**, cette application permet d'explorer et d'analyser
 des **logs** produits par un **pare-feu iptables**.
 
 ---
@@ -82,7 +83,7 @@ Nous disposons donc des logs qui documentent qui a voulu se connecter, à quoi, 
     c3.metric("IP sources distinctes",  f"{df['src_ip'].nunique():,}")
     c4.metric("Règles actives",         f"{df['policy_id'].nunique()}")
 
-    src = current_source()
+    src = _src
     src_labels = {
         "mock":          ("🟡", "Données de démonstration",
                           "Les logs affichés sont générés automatiquement pour simuler un trafic réseau réaliste. "
