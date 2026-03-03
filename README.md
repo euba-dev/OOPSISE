@@ -1,6 +1,6 @@
 # OPSIE × SISE 2026 — Analyse de logs Firewall
 
-Application web interactive de visualisation et d'analyse de logs iptables, développée dans le cadre du **Challenge OPSIE × SISE 2026** — Master SISE, Université Lumière Lyon 2.
+Application web interactive de visualisation et d'analyse de logs iptables, développée dans le cadre du **Challenge OPSIE × SISE 2026** — Master SISE & OPSIE, Université Lumière Lyon 2.
 
 ---
 
@@ -67,8 +67,7 @@ PARQUET_PATH=data/logs_export.parquet
 MISTRAL_API_KEY=votre_clé_ici
 ```
 
-> `.env` est dans `.gitignore` — ne jamais committer les secrets.
-
+> `.env` est dans `.gitignore`. Vous devez inclure votre clé API. 
 ---
 
 ## Lancement
@@ -95,7 +94,7 @@ Trois méthodes sont disponibles selon votre contexte.
 
 ### Méthode A — Docker Compose (recommandée, depuis le code source)
 
-La méthode la plus simple si vous avez le dossier `OOPSISE/` en local. Docker Compose charge automatiquement le fichier `.env` (clé Mistral incluse).
+La méthode la plus simple si vous avez le dossier `OOPSISE/` en local. Docker Compose charge automatiquement le fichier `.env` (qui contient la clé Mistral).
 
 **1. Lancer l'application :**
 
